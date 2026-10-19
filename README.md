@@ -21,6 +21,7 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 - **Playback performance.** Parallel chunk downloading, progressive streaming (playback starts on the first bytes), pre-warmed stream URLs and TLS connections, sub-0.5s seeks.
 - **Continuity.** Seamless in-player episode transitions, next-episode pre-resolve with a stream matcher, one-press Continue Watching resume, Up-Next countdown.
 - **Reliability.** In-RAM stream ring buffer, non-blocking player teardown, fixes for buffer and seek freezes.
+- **Intro/outro skip.** Anime via AniSkip, everything else via TheIntroDB, embedded chapters as offline fallback.
 - **Picture.** Upscaler options (Cinema HQ bicubic + CAS, FSR1 + sharpening, Anime4K shaders), SDR tone-mapping polish, HDR10 diagnostic probe.
 - **Interface.** Glass visual language (frosted surfaces, rim light, cinematic hero), top pill navigation, instant search, live setting descriptions.
 
@@ -67,7 +68,7 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 
 ### Playback
 - Seek: 0.25s start gate, 15s keyframe snap, stale-frame drain on seek
-- Playback speed control; skip-intro via TheIntroDB; watched-sync
+- Playback speed control; watched-sync
 - Hardware decoder: unconditional slot renewal on flush; VDEC frame-buffer DMA race fixed
 - Audio: HDMI init handling; zero-copy IEC61937 bursts; halved passthrough sleeps
 
@@ -75,6 +76,14 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 - Seamless in-player Play Next (video frame held, no loading modal; 8s stall fallback)
 - Next-episode pre-resolve at 80% playback with a 4-tier stream matcher (info_hash → binge_group → same addon+resolution+name → same addon+resolution)
 - Up-Next countdown card; Cross = auto-play / Square = choose-stream on episode lists
+
+### Intro / outro skip
+- Anime: intro/outro timestamps via the AniSkip API (series resolved to MyAnimeList IDs through Kitsu mappings, with a Jikan title-search fallback; mappings cached per series)
+- All other shows and movies: skip segments via TheIntroDB (IMDb IDs, with a series-ID → video-ID → loaded-metadata fallback chain to find the ID)
+- Embedded container chapters recognized too (intro/opening/theme, recap/previously, outro/ending/credits) — works offline; an online result only replaces them when non-empty
+- Modes Off / Prompt / Auto (Settings → Playback); intro and recap auto-skip, credits and preview prompt-only to protect post-credit scenes
+- Amber bands on the seekbar mark skippable segments; Triangle prompt card while the OSD is visible; skip chunks pre-warmed so the jump is instant
+- Stats for Nerds reports skip state per episode (e.g. which ID scheme was used, or why lookup was skipped)
 
 ### Picture
 - Upscaler options: Cinema HQ (anti-ringing bicubic + RCAS), FSR1 + sharpening, Anime4K shaders
