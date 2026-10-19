@@ -1,31 +1,43 @@
 # Not Stremio
 
-**A tuned fork of [Sp9nky's unofficial Stremio PS5 port](https://github.com/Sp9nky/unofficial-stremio-ps5-port) — Thai subtitles fixed, playback hardened, and everything sped up.**
+**The PS5 Stremio client, refined: Thai subtitles that actually work, sub-second everything, and a glass interface.**
+
+Not Stremio is a fork of [Sp9nky's unofficial Stremio PS5 port](https://github.com/Sp9nky/unofficial-stremio-ps5-port). Upstream brought Stremio to the PlayStation 5 — this fork is about making it feel native there: fast, stable, and at home in Thai.
 
 > [!IMPORTANT]
-> **Credit where it's due.** This project is a fork. The original port — the app itself, its design, its torrent engine, its UI — was built by **Sp9nky**. Everything here stands on that work. If you like this app, support the upstream author:
+> **Credit where it's due.** The original port — the app itself, its design, its torrent engine, its UI — was built by **Sp9nky**. Everything here stands on that work. If you like this app, support the upstream author:
 >
 > [![Support Sp9nky on Ko-fi](https://img.shields.io/badge/Ko--fi-Support_the_original_author-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/sp9nky)
 >
 > Bug fixes from this fork are contributed back upstream where appropriate (e.g. the Thai subtitle fix, [upstream PR #10](https://github.com/Sp9nky/unofficial-stremio-ps5-port/pull/10)).
+>
+> The glass visual language is inspired by [Fxy6969's "liquid-glass" Stremio theme](https://github.com/REVENGE977/stremio-enhanced) (via Stremio Enhanced) — re-implemented natively for the PS5 UI toolkit, not copied.
 
 A Stremio client for jailbroken PlayStation 5 consoles, running as a native app on the home screen: browse your catalogs and library, pick a stream, and watch it, all with the DualSense.
 
 > **Unofficial.** This project is not affiliated with, endorsed by or supported by Stremio, or by Sony Interactive Entertainment. It has no connection with either. "Stremio" and its logo are trademarks of their owner; "PlayStation", "PS5" and "DualSense" are trademarks of Sony Interactive Entertainment Inc. No Sony code, SDK, keys or firmware files are included.
 
-## What this fork changes
+## Why this fork exists
 
-Upstream is the app. This fork is a flaw-fix and performance program on top of it:
+Three things upstream doesn't do that this fork is built around:
 
-| Area | What changed |
-| --- | --- |
-| **Thai subtitles** | Fixed mojibake (TIS-620 decoding), bundled Noto Sans Thai into the font chain, and shaped combining marks with the font's GPOS anchors. Thai subs now render correctly. |
-| **Startup** | Sub-second cold start; the Board boots from a snapshot of your last session instead of a loading logo. Silent startup (no chime). |
-| **Stream start** | Parallel chunk downloading with progressive streaming — playback begins on the first bytes instead of waiting for full buffers. Pre-resolved stream URLs and warm TLS connections make repeat opens near-instant. |
-| **Play Next** | Seamless in-player episode transitions: no black flash, no loading modal, next episode pre-resolved and pre-warmed while you watch. |
-| **Reliability** | Removed the multi-GB on-disk stream cache (source of a segfault on large files) in favor of a pure in-RAM ring buffer; fixed player-exit deadlocks, seek freezes, and buffer races. |
-| **Search** | Instant search: pre-built index, no debounce lag, IME race handling. |
-| **Polish** | Autoplay/Up-Next flow, Continue Watching one-press resume, per-setting live descriptions, and a sweep of small UI fixes. |
+1. **Thai, properly.** Upstream never handled Thai subtitles — mojibake text, missing glyphs, broken combining marks. This fork decodes TIS-620, bundles Noto Sans Thai into the font chain, and shapes marks with the font's own GPOS anchors. If you watch with Thai subs, this is the version for you.
+2. **Speed as a feature.** Sub-second cold start (the Board boots from a snapshot of your last session), streams that begin on the first bytes, pre-warmed connections, seamless in-player episode transitions, instant search. Every interaction was timed and the slow ones were killed.
+3. **Stability under load.** The multi-GB on-disk stream cache that segfaulted on large files is gone (pure in-RAM ring buffer now); player-exit deadlocks, seek freezes, and buffer races are fixed. It should just keep playing.
+
+Plus a glass interface language — frosted surfaces, rim light, cinematic hero treatment — inspired by the Stremio Enhanced theme scene and rebuilt natively for the PS5.
+
+## What changed vs upstream
+
+| Area | Upstream | Not Stremio |
+| --- | --- | --- |
+| Thai subtitles | mojibake / missing glyphs | TIS-620 decoding, Noto Sans Thai, GPOS mark shaping |
+| Startup | loading logo | sub-second, snapshot boot, silent |
+| Stream start | waits for full buffers | progressive — plays on first bytes; pre-warmed URLs/TLS |
+| Play Next | loading modal between episodes | seamless, in-player, pre-resolved |
+| Stream buffering | multi-GB disk cache (crash risk) | 128 MB RAM ring buffer |
+| Search | debounced, slow | instant, pre-built index |
+| Design language | upstream default | glass theme (Fxy6969-inspired, native) |
 
 ## Screenshots
 
@@ -90,5 +102,6 @@ Same as upstream, plus: this fork is tested on-device by its maintainer, but eve
 ## Credits and licenses
 
 - **Sp9nky** — author of the [unofficial Stremio PS5 port](https://github.com/Sp9nky/unofficial-stremio-ps5-port) this fork is built on. All core app credit goes upstream.
+- **Fxy6969** — author of the "liquid-glass" Stremio theme (via [REVENGE977/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced)) that inspired this fork's glass visual language. Re-implemented natively; no theme code was copied.
 - This fork's changes (Thai subtitle support, performance and reliability work) by ChillQuant, contributed back upstream where suitable.
 - Licensed under **GNU GPL v3** (see [LICENSE](LICENSE)), same as upstream. Forking and modifying is exactly what the license is for.
