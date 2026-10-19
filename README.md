@@ -51,6 +51,7 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 - Continue Watching order-locked; one-press resume on up-next cards
 - Full-viewport hero with centered fading dots; logo capped at 560px/130px with metadata clearance
 - Detail ambilight + Metahub artwork fallback; 16:9 Continue Watching cards
+- Viewport-aware artwork prefetch (priority queue, asymmetric scroll window)
 
 ### Search
 - Index pre-built at boot; no input debounce
@@ -88,6 +89,7 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 ### Picture
 - Upscaler options: Cinema HQ (anti-ringing bicubic + RCAS), FSR1 + sharpening, Anime4K shaders
 - Bilateral chroma upsampling + debanding; Dolby Vision P5 fix; gamut-safe tone mapping
+- SDR tone-mapping polish; HDR10 diagnostic probe; 8-bit SDR shader fast path
 - OSD upscaler badge + nerd stats; volume OSD and hint bar clearance
 
 ### Settings
@@ -103,6 +105,7 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 
 ### Accounts
 - Multiple account profiles with per-profile state
+- Sign-in modal rendering fixed (layering)
 
 ### Design language
 - Glass theme: frosted surfaces, 1px rim light, soft shadows, neutral-black dimming
