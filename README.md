@@ -1,8 +1,6 @@
 # Not Stremio
 
-**The PS5 Stremio client, refined: Thai subtitles that actually work, sub-second everything, and a glass interface.**
-
-Not Stremio is a fork of [Sp9nky's unofficial Stremio PS5 port](https://github.com/Sp9nky/unofficial-stremio-ps5-port). Upstream brought Stremio to the PlayStation 5 — this fork is about making it feel native there: fast, stable, and at home in Thai.
+**A fork of [Sp9nky's unofficial Stremio PS5 port](https://github.com/Sp9nky/unofficial-stremio-ps5-port), focused on Thai subtitle support, playback performance, and a glass interface.**
 
 > [!IMPORTANT]
 > **Credit where it's due.** The original port — the app itself, its design, its torrent engine, its UI — was built by **Sp9nky**. Everything here stands on that work. If you like this app, support the upstream author:
@@ -17,27 +15,36 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 
 > **Unofficial.** This project is not affiliated with, endorsed by or supported by Stremio, or by Sony Interactive Entertainment. It has no connection with either. "Stremio" and its logo are trademarks of their owner; "PlayStation", "PS5" and "DualSense" are trademarks of Sony Interactive Entertainment Inc. No Sony code, SDK, keys or firmware files are included.
 
-## Why this fork exists
+## What this fork focuses on
 
-Three things upstream doesn't do that this fork is built around:
+- **Thai language support.** TIS-620 subtitle decoding, Noto Sans Thai bundled into the font chain, and combining-mark shaping via the font's GPOS anchors.
+- **Playback performance.** Parallel chunk downloading, progressive streaming (playback starts on the first bytes), pre-warmed stream URLs and TLS connections, sub-0.5s seeks.
+- **Continuity.** Seamless in-player episode transitions, next-episode pre-resolve with a stream matcher, one-press Continue Watching resume, Up-Next countdown.
+- **Reliability.** In-RAM stream ring buffer, non-blocking player teardown, fixes for buffer and seek freezes.
+- **Picture.** Upscaler options (Cinema HQ bicubic + CAS, FSR1 + sharpening, Anime4K shaders), SDR tone-mapping polish, HDR10 diagnostic probe.
+- **Interface.** Glass visual language (frosted surfaces, rim light, cinematic hero), top pill navigation, instant search, live setting descriptions.
 
-1. **Thai, properly.** Upstream never handled Thai subtitles — mojibake text, missing glyphs, broken combining marks. This fork decodes TIS-620, bundles Noto Sans Thai into the font chain, and shapes marks with the font's own GPOS anchors. If you watch with Thai subs, this is the version for you.
-2. **Speed as a feature.** Sub-second cold start (the Board boots from a snapshot of your last session), streams that begin on the first bytes, pre-warmed connections, seamless in-player episode transitions, instant search. Every interaction was timed and the slow ones were killed.
-3. **Stability under load.** The multi-GB on-disk stream cache that segfaulted on large files is gone (pure in-RAM ring buffer now); player-exit deadlocks, seek freezes, and buffer races are fixed. It should just keep playing.
-
-Plus a glass interface language — frosted surfaces, rim light, cinematic hero treatment — inspired by the Stremio Enhanced theme scene and rebuilt natively for the PS5.
-
-## What changed vs upstream
+## Differences from upstream
 
 | Area | Upstream | Not Stremio |
 | --- | --- | --- |
 | Thai subtitles | mojibake / missing glyphs | TIS-620 decoding, Noto Sans Thai, GPOS mark shaping |
-| Startup | loading logo | sub-second, snapshot boot, silent |
-| Stream start | waits for full buffers | progressive — plays on first bytes; pre-warmed URLs/TLS |
-| Play Next | loading modal between episodes | seamless, in-player, pre-resolved |
-| Stream buffering | multi-GB disk cache (crash risk) | 128 MB RAM ring buffer |
-| Search | debounced, slow | instant, pre-built index |
-| Design language | upstream default | glass theme (Fxy6969-inspired, native) |
+| Startup | loading logo | snapshot boot of last session, no startup chime |
+| Navigation | — | top horizontal pill navigation; L1/R1 switch pages; L2/R2 jump settings sections |
+| Search | debounced input | pre-built index; Triangle opens search from anywhere; IME race handling |
+| Stream start | buffers before playback | progressive — plays on first bytes; 6 parallel chunk downloads |
+| Stream buffering | on-disk cache files | 128 MB in-RAM ring buffer |
+| Connection reuse | new handshake per stream | pre-warmed URLs and TLS connections (20-min cache, re-warmed on Up Next) |
+| Seeking | — | 0.25s start gate; 15s keyframe snap |
+| Episode transitions | loading screen between episodes | seamless in-player transitions; next episode pre-resolved at 80% |
+| Continue Watching | — | one-press resume; 4-tier stream matcher for autoplay; Up-Next countdown |
+| Upscaling | — | Cinema HQ (bicubic + CAS), FSR1 + sharpening, Anime4K shaders |
+| Tone mapping | — | SDR tone-mapping polish; HDR10 diagnostic probe |
+| Player options | — | playback speed, skip-intro (TheIntroDB), watched-sync |
+| Settings | static labels | live per-choice descriptions; artwork cache capped at 512 MB |
+| Player exit | — | reaper-thread teardown, returns instantly |
+| Accounts | single account | multiple account profiles |
+| Design language | upstream default | glass theme, inspired by Fxy6969's liquid-glass (re-implemented natively) |
 
 ## Screenshots
 
