@@ -24,27 +24,81 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 - **Picture.** Upscaler options (Cinema HQ bicubic + CAS, FSR1 + sharpening, Anime4K shaders), SDR tone-mapping polish, HDR10 diagnostic probe.
 - **Interface.** Glass visual language (frosted surfaces, rim light, cinematic hero), top pill navigation, instant search, live setting descriptions.
 
-## Differences from upstream
+## Complete list of changes vs upstream
 
-| Area | Upstream | Not Stremio |
-| --- | --- | --- |
-| Thai subtitles | mojibake / missing glyphs | TIS-620 decoding, Noto Sans Thai, GPOS mark shaping |
-| Startup | loading logo | snapshot boot of last session, no startup chime |
-| Navigation | — | top horizontal pill navigation; L1/R1 switch pages; L2/R2 jump settings sections |
-| Search | debounced input | pre-built index; Triangle opens search from anywhere; IME race handling |
-| Stream start | buffers before playback | progressive — plays on first bytes; 6 parallel chunk downloads |
-| Stream buffering | on-disk cache files | 128 MB in-RAM ring buffer |
-| Connection reuse | new handshake per stream | pre-warmed URLs and TLS connections (20-min cache, re-warmed on Up Next) |
-| Seeking | — | 0.25s start gate; 15s keyframe snap |
-| Episode transitions | loading screen between episodes | seamless in-player transitions; next episode pre-resolved at 80% |
-| Continue Watching | — | one-press resume; 4-tier stream matcher for autoplay; Up-Next countdown |
-| Upscaling | — | Cinema HQ (bicubic + CAS), FSR1 + sharpening, Anime4K shaders |
-| Tone mapping | — | SDR tone-mapping polish; HDR10 diagnostic probe |
-| Player options | — | playback speed, skip-intro (TheIntroDB), watched-sync |
-| Settings | static labels | live per-choice descriptions; artwork cache capped at 512 MB |
-| Player exit | — | reaper-thread teardown, returns instantly |
-| Accounts | single account | multiple account profiles |
-| Design language | upstream default | glass theme, inspired by Fxy6969's liquid-glass (re-implemented natively) |
+### Subtitles & language
+- Thai subtitle decoding (TIS-620) instead of mojibake
+- Noto Sans Thai bundled into the UI font chain
+- Thai combining-mark shaping via the font's GPOS anchors ([upstream PR #10](https://github.com/Sp9nky/unofficial-stremio-ps5-port/pull/10))
+- Subtitle pre-parse before playback starts
+- L2/R2 subtitle delay ±0.25s in player
+
+### Startup & boot
+- Board boots from a snapshot of the last session (schema v3: cursor + Continue Watching, atomic write on shutdown)
+- No loading logo, no startup chime
+- Addon manifests cached to disk; 0.75s boot gate
+- Offline-resilient Board/Detail when the network is down
+
+### Navigation & menus
+- Top horizontal pill navigation
+- L1/R1 switches pages on all 5 tabs; L2/R2 jumps Settings sections
+- ○ from any page returns to the Board
+- Triangle opens Search from anywhere, including the top rail
+
+### Board
+- Row lifecycle states (cached / validating / synced / offline) with shimmer and sync pill
+- Continue Watching order-locked; one-press resume on up-next cards
+- Full-viewport hero with centered fading dots; logo capped at 560px/130px with metadata clearance
+- Detail ambilight + Metahub artwork fallback; 16:9 Continue Watching cards
+
+### Search
+- Index pre-built at boot; no input debounce
+- Streaming results with 6s addon timeout and cursor-stable incremental rows
+- IME busy-race retry; sync local fallback scan; 5s search timeout
+
+### Streaming engine
+- 6 parallel chunk downloads, 2MB chunks
+- Progressive streaming — playback starts on the first bytes (128KB playhead window)
+- 128MB in-RAM ring buffer; no on-disk stream cache files
+- Pre-warmed stream URLs and TLS connections (20-min cache, self-populating, re-warmed when the Up Next card appears)
+- First chunk gets an 80ms worker head start
+- Debrid: speculative pre-resolution on 250ms dwell; urgent-chunk tail-seek protection; 256KB curl buffers with warm connection pool
+- Torrent: softer first rebuffer (5s); 32MB single-connection read-ahead
+
+### Playback
+- Seek: 0.25s start gate, 15s keyframe snap, stale-frame drain on seek
+- Playback speed control; skip-intro via TheIntroDB; watched-sync
+- Hardware decoder: unconditional slot renewal on flush; VDEC frame-buffer DMA race fixed
+- Audio: HDMI init handling; zero-copy IEC61937 bursts; halved passthrough sleeps
+
+### Episode continuity
+- Seamless in-player Play Next (video frame held, no loading modal; 8s stall fallback)
+- Next-episode pre-resolve at 80% playback with a 4-tier stream matcher (info_hash → binge_group → same addon+resolution+name → same addon+resolution)
+- Up-Next countdown card; Cross = auto-play / Square = choose-stream on episode lists
+
+### Picture
+- Upscaler options: Cinema HQ (anti-ringing bicubic + RCAS), FSR1 + sharpening, Anime4K shaders
+- Bilateral chroma upsampling + debanding; Dolby Vision P5 fix; gamut-safe tone mapping
+- OSD upscaler badge + nerd stats; volume OSD and hint bar clearance
+
+### Settings
+- Live per-choice descriptions under every setting (12 helpers: upscaler, sharpening, tone mapping, audio, etc.)
+- Artwork disk cache capped at 512MB with boot-time prune; cache size refreshes live on the Settings page
+- Accessibility settings page; haptics and hints options; reduce-motion fade
+
+### Reliability
+- Non-blocking player exit (reaper thread) and detached stream teardown — opening the next episode never waits on the previous one's connections
+- Fixed: Play-Next 65% buffer freeze, fast-forward freeze at full buffer, large-file crash
+- Thread-safety: font calls kept on the GL thread; artwork mutex; disk I/O moved off-mutex with generation-validated pread/pwrite
+- CA bundle cached; curl pool return fixed; `tls_verify=0` removed
+
+### Accounts
+- Multiple account profiles with per-profile state
+
+### Design language
+- Glass theme: frosted surfaces, 1px rim light, soft shadows, neutral-black dimming
+- Unified navigation capsule; stream picker with glass badges; Discover glass preview
+- Inspired by Fxy6969's "liquid-glass" Stremio theme (via Stremio Enhanced) — re-implemented natively for the PS5 UI toolkit
 
 ## Screenshots
 
