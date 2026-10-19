@@ -138,10 +138,10 @@ Real captures from the fork, framed:
 
 | | |
 |---|---|
-| ![Discover](docs/screenshots/discover.jpg) | ![Library](docs/screenshots/library.jpg) |
-| *Discover* | *Library* |
-| ![Addons](docs/screenshots/addons.jpg) | |
-| *Addons* | |
+| ![Board](docs/screenshots/board.jpg) | ![Discover](docs/screenshots/discover.jpg) |
+| *Board* | *Discover* |
+| ![Library](docs/screenshots/library.jpg) | ![Addons](docs/screenshots/addons.jpg) |
+| *Library* | *Addons* |
 
 ## Requirements
 
