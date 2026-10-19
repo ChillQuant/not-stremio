@@ -1,7 +1,5 @@
 # Not Stremio
 
-![Not Stremio](docs/not-stremio-hero.jpg)
-
 **A fork of [Sp9nky's unofficial Stremio PS5 port](https://github.com/Sp9nky/unofficial-stremio-ps5-port), focused on Thai subtitle support, playback performance, and a glass interface.**
 
 > [!IMPORTANT]
