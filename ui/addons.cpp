@@ -16,9 +16,9 @@ namespace
 {
 
 constexpr int kCols = 3;
-constexpr float kTileW = 540.0f;
+constexpr float kTileW = 580.0f;
 constexpr float kTileH = 248.0f;
-constexpr float kGapX = 25.0f;
+constexpr float kGapX = 26.0f;
 constexpr float kGapY = 24.0f;
 constexpr float kTop = 214.0f;
 
@@ -45,10 +45,13 @@ void Addons::set_content(const AddonsContent *content)
 void Addons::update(const hui::InputFrame &input, float dt)
 {
     tick(dt);
+    // The rail takes the D-pad while it holds focus, even when there is no
+    // content yet: nav must reach the top pill nav on an empty list.
+    const bool rail_used = rail_input(input);
     if (!content_ || content_->items.empty())
         return;
     const int count = static_cast<int>(content_->items.size());
-    if (!rail_input(input))
+    if (!rail_used)
     {
         const int col = index_ % kCols;
         switch (input.nav)
@@ -66,6 +69,8 @@ void Addons::update(const hui::InputFrame &input, float dt)
         case Direction::up:
             if (index_ >= kCols)
                 index_ -= kCols;
+            else
+                to_rail();
             break;
         case Direction::down:
             if (index_ + kCols < count)
@@ -90,7 +95,10 @@ void Addons::draw_tile(hui::gfx::DrawList &list, const Addon &a, const Rect &r, 
 {
     list.push_opacity(enter);
     list.push_transform(1.0f, 0.0f, 0.0f, 0.0f, 16.0f * (1.0f - enter));
-    list.rounded_rect(r, 28.0f, focused ? theme::surface_hi : theme::surface);
+    if (focused)
+        draw_glass_panel(list, env_, r, 28.0f, theme::glass_fill);
+    else
+        list.rounded_rect(r, 28.0f, theme::surface);
     // The addon's logo, or its initial on its own colour.
     const Rect icon{r.x + 30.0f, r.y + 30.0f, 88.0f, 88.0f};
     if (a.logo != 0)
@@ -106,7 +114,7 @@ void Addons::draw_tile(hui::gfx::DrawList &list, const Addon &a, const Rect &r, 
     }
     const float x = icon.x + icon.w + 24.0f;
     const float w = r.x + r.w - x - 28.0f;
-    text(list, env_.fonts.semibold, env_.fonts.semibold.font->fit(a.name, 30.0f, w), x, r.y + 66.0f, 30.0f, theme::ink);
+    text(list, env_.fonts.semibold, cached_fit(a.text_cache_, env_.fonts.semibold.font, a.name, 30.0f, w), x, r.y + 66.0f, 30.0f, theme::ink);
     // The version gives way to the "Local" tag, which keeps its place.
     const float local_w = a.local ? env_.fonts.semibold.measure("Local", 20.0f) + 28.0f + 16.0f : 0.0f;
     const std::string version = env_.fonts.regular.font->fit(a.version, 22.0f, w - local_w);
@@ -114,6 +122,12 @@ void Addons::draw_tile(hui::gfx::DrawList &list, const Addon &a, const Rect &r, 
     if (a.local)
         draw_tag(list, env_, "Local", x + env_.fonts.regular.measure(version, 22.0f) + 16.0f, r.y + 94.0f,
                  theme::accent.with_alpha(0.28f), theme::accent_soft);
+    if (a.disabled)
+    {
+        const float dx = x + env_.fonts.regular.measure(version, 22.0f) + 16.0f +
+                         (a.local ? env_.fonts.semibold.measure("Local", 20.0f) + 28.0f + 16.0f : 0.0f);
+        draw_tag(list, env_, "Disabled", dx, r.y + 94.0f, Color::rgb(0xffffff, 0.09f), theme::ink_3);
+    }
     // What it provides. Tags that would run past the tile are counted instead: "+2".
     std::vector<std::string> kinds;
     for (std::size_t start = 0; start < a.types.size();)
@@ -141,31 +155,39 @@ void Addons::draw_tile(hui::gfx::DrawList &list, const Addon &a, const Rect &r, 
         }
         tx += draw_tag(list, env_, kinds[i], tx, r.y + 146.0f, Color::rgb(0xffffff, 0.09f), theme::ink_2) + 10.0f;
     }
-    hui::ui::paragraph(list, env_.fonts.regular, a.description, r.x + 30.0f, r.y + 196.0f, 22.0f, r.w - 60.0f, 29.0f,
+    cached_paragraph(list, a.text_cache_, env_.fonts.regular, a.description, r.x + 30.0f, r.y + 196.0f, 22.0f, r.w - 60.0f, 29.0f,
                        theme::ink_2, 2);
     list.pop_transform();
     list.pop_opacity();
 }
 
-void Addons::draw(hui::gfx::DrawList &list, hui::gfx::BackdropSpec &backdrop) const
+void Addons::draw(hui::gfx::DrawList &bg, hui::gfx::DrawList &fg, hui::gfx::BackdropSpec &backdrop) const
 {
     apply_page_backdrop(backdrop, clock_);
     if (!content_)
         return;
     const float in = tween::stagger(age_, 0, 0.0f, 0.45f);
-    list.push_opacity(in);
-    char count[48];
-    std::snprintf(count, sizeof(count), "%zu addons installed", content_->items.size());
-    text(list, env_.fonts.semibold, count, theme::kLeft, 158.0f, theme::kSubtitle, theme::ink_2);
-    list.pop_opacity();
+    bg.push_opacity(in);
+    char count[64];
+    std::size_t disabled = 0;
+    for (const auto &it : content_->items)
+        if (it.disabled)
+            ++disabled;
+    if (disabled > 0)
+        std::snprintf(count, sizeof(count), "%zu addons installed (%zu disabled)", content_->items.size(), disabled);
+    else
+        std::snprintf(count, sizeof(count), "%zu addons installed", content_->items.size());
+    text(bg, env_.fonts.semibold, count, theme::kLeft, 158.0f, theme::kSubtitle, theme::ink_2);
+    bg.pop_opacity();
 
-    list.push_clip({theme::kLeft - 44.0f, 192.0f, theme::kScreenW, 1080.0f - 192.0f});
+    bg.push_clip({theme::kLeft - 44.0f, 192.0f, theme::kScreenW, 1080.0f - 192.0f});
+    fg.push_clip({theme::kLeft - 44.0f, 192.0f, theme::kScreenW, 1080.0f - 192.0f});
     const Rect ring = ring_.value();
     if (focus_on_.value > 0.01f)
     {
-        list.push_opacity(focus_on_.value);
-        list.glow(ring.inset(-3.0f), 30.0f, 30.0f, theme::accent.with_alpha(0.38f));
-        list.pop_opacity();
+        fg.push_opacity(focus_on_.value);
+        fg.glow(ring.inset(-2.0f), 30.0f, 30.0f, theme::accent.with_alpha(0.38f));
+        fg.pop_opacity();
     }
     for (int i = 0; i < static_cast<int>(content_->items.size()); ++i)
     {
@@ -173,22 +195,24 @@ void Addons::draw(hui::gfx::DrawList &list, hui::gfx::BackdropSpec &backdrop) co
         if (r.y > 1080.0f || r.y + r.h < 180.0f)
             continue;
         const float enter = tween::stagger(age_, (i / kCols) * 2 + i % kCols, 0.045f, 0.45f);
-        draw_tile(list, content_->items[i], r, enter, i == index_ && !rail_.focused());
+        const bool focused = i == index_ && !rail_.focused();
+        draw_tile(focused ? fg : bg, content_->items[i], r, enter, focused);
     }
     if (focus_on_.value > 0.01f)
     {
-        list.push_opacity(focus_on_.value);
-        list.bordered_rect(ring.inset(-3.0f), 30.0f, Color::rgb(0xffffff, 0.0f), 4.0f, Color::rgb(0xffffff));
-        list.pop_opacity();
+        fg.push_opacity(focus_on_.value);
+        fg.bordered_rect(ring.inset(-2.0f), 30.0f, Color::rgb(0xffffff, 0.0f), 3.5f, Color::rgb(0xffffff));
+        fg.pop_opacity();
     }
-    list.pop_clip();
+    bg.pop_clip();
+    fg.pop_clip();
 
-    fade_down(list, theme::kRailWidth, 0.0f, theme::kScreenW, 118.0f, 0.62f);
-    fade_up(list, theme::kRailWidth, 1000.0f, theme::kScreenW, 80.0f, 0.94f);
-    draw_topbar(list, env_, false, age_);
+    fade_down(bg, theme::kRailWidth, 0.0f, theme::kScreenW, 118.0f, 0.62f);
+    fade_up(bg, theme::kRailWidth, 1000.0f, theme::kScreenW, 80.0f, 0.94f);
+    draw_topbar(bg, fg, env_, false, age_);
     // The only action here, where it can be seen.
-    draw_chip(list, env_, hui::ui::Button::square, "Reload addons", theme::kRight - 252.0f, 148.0f);
-    rail_.draw(list, env_, age_);
+    draw_chip(fg, env_, hui::ui::Button::square, "Reload addons", theme::kRight - 252.0f, 148.0f);
+    rail_.draw(fg, env_, age_);
 }
 
 } // namespace sx

@@ -23,16 +23,20 @@ struct AudioPort {
 class PcmOut {
 public:
 	static const int kRate = 48000;
-	static const int kBytesPerFrame = 4;  // two channels of s16
 
 	PcmOut() = default;
 	PcmOut(const PcmOut&) = delete;
 	PcmOut& operator=(const PcmOut&) = delete;
 	~PcmOut() { close(); }
 
-	bool open();
+	// Opens the console's audio port: channels is 2 (stereo) or 8 (7.1).
+	// An 8-channel request falls back to stereo if the console refuses it,
+	// so a refusal can never leave the player silent; channels() reports
+	// what actually opened.
+	bool open(int channels);
 	void close();
 	bool is_open() const { return open_; }
+	int channels() const { return channels_; }
 
 	// Appends samples; the queue grows as needed (the caller keeps it short).
 	void queue(const void* data, size_t bytes);
@@ -47,6 +51,11 @@ private:
 
 	bool open_ = false;
 	int handle_ = -1;
+	// what actually opened: 2 or 8. Plain (non-atomic) members are safe
+	// today only because open() writes them before any reader thread
+	// (run(), player audio thread) starts; keep that ordering if open()
+	// is ever called again while a thread is live.
+	int channels_ = 2;  // what actually opened: 2 or 8
 	pthread_t thread_{};
 	std::atomic<bool> stop_{false};
 	std::atomic<bool> paused_{true};

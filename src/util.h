@@ -11,6 +11,13 @@ using json = nlohmann::json;
 // Logging goes to stdout and to <data dir>/log.txt (opened by log_open).
 void log_open(const std::string& path);
 void dlog(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+// Diagnostic recording: start/stop capturing dlog() output to a timestamped
+// file in the data dir. Returns the file path (empty on failure / not active).
+std::string log_record_start(const std::string& dir);
+std::string log_record_stop();
+bool log_record_active();
+// Redacts a URL for logs: scheme://host[/...], no path, query or credentials.
+std::string log_url(const std::string& url);
 
 // Strings
 std::string trim(const std::string& s);
@@ -32,6 +39,7 @@ std::string rml_escape(const std::string& s);
 bool is_valid_utf8(const std::string& s);
 std::string cp1253_to_utf8(const std::string& s);   // Greek Windows code page
 std::string cp1252_to_utf8(const std::string& s);   // Western Windows code page
+std::string cp874_to_utf8(const std::string& s);    // Thai Windows code page (TIS-620)
 std::string to_utf8(const std::string& s, const std::string& lang_hint);
 
 // Time

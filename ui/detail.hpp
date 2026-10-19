@@ -37,7 +37,7 @@ class Detail
     }
     void enter();
     void update(const hui::InputFrame &input, float dt);
-    void draw(hui::gfx::DrawList &list, hui::gfx::BackdropSpec &backdrop) const;
+    void draw(hui::gfx::DrawList &bg, hui::gfx::DrawList &fg, hui::gfx::BackdropSpec &backdrop) const;
 
     Mode mode() const
     {
@@ -67,6 +67,9 @@ class Detail
     hui::tween::Timer swap_; // the panel's content changing
     float age_ = 0.0f;
     float clock_ = 0.0f;
+    // Laid-out text for the meta/synopsis/status lines (the per-item ones live
+    // on Title/Stream).
+    mutable CachedText text_cache_;
 };
 
 } // namespace sx

@@ -3,9 +3,9 @@
 // ASCII-only atlases. Titles, names and subtitles come from addons in any
 // language, so a face is a chain: the first file that has a character draws it.
 //
-//   regular   Inter Regular   -> Noto Sans -> Noto Naskh Arabic UI
-//   semibold  Inter SemiBold  -> Noto Sans Bold -> Noto Naskh Arabic UI Bold
-//   display   Montserrat      -> Inter SemiBold -> Noto Sans Bold -> Naskh Bold
+//   regular   Inter Regular   -> Noto Sans -> Noto Sans Thai -> Noto Naskh Arabic UI
+//   semibold  Inter SemiBold  -> Noto Sans Bold -> Noto Sans Thai Bold -> Noto Naskh Arabic UI Bold
+//   display   Montserrat      -> Inter SemiBold -> Noto Sans Bold -> Noto Sans Thai Bold -> Naskh Bold
 //
 // Right-to-left text (Arabic, Hebrew) is reordered and its letters joined by
 // FriBidi (src/bidi.cpp) before it is measured or drawn.
@@ -41,6 +41,9 @@ class TtfChain : public hui::gfx::GlyphSource
     // Loads the faces in priority order; false if the first one can't be read.
     bool load(const std::string &font_dir, const std::vector<FaceSpec> &faces);
     bool glyph(std::uint32_t codepoint, hui::gfx::GlyphBitmap &out) override;
+    // MODIFIED for Stremio for PS5: rasterize a glyph by index from the Thai
+    // face (for .small/.narrow variant substitution).
+    bool glyph_by_index(int glyph_index, hui::gfx::GlyphBitmap &out) override;
 
     float pixel_size() const
     {
@@ -52,6 +55,12 @@ class TtfChain : public hui::gfx::GlyphSource
     }
     // Vertical metrics of the first face at pixel_size().
     void metrics(float *ascent, float *descent, float *line_gap) const;
+    // Thai font files that were requested but could not be loaded. Used to
+    // warn the user (Thai subtitles render as '?' without them).
+    const std::vector<std::string> &missing_thai() const
+    {
+        return missing_thai_;
+    }
 
   private:
     struct Face
@@ -61,6 +70,11 @@ class TtfChain : public hui::gfx::GlyphSource
         float size_scale = 1.0f;
     };
     std::vector<std::unique_ptr<Face>> faces_;
+    // MODIFIED for Stremio for PS5: index of the Thai face in faces_ (-1 if
+    // none). Variant glyphs (.small/.narrow) are rasterized from this face.
+    int thai_face_ = -1;
+    // Thai font files that failed to load (for user warning).
+    std::vector<std::string> missing_thai_;
     float pixel_size_;
     float range_;
 };
@@ -72,6 +86,9 @@ struct UiFonts
     hui::gfx::Font regular, semibold, display;
     // Pre-baked faces for what is only ever ASCII.
     hui::gfx::Font mono, pixel, hand;
+    // Thai font files that could not be loaded (union across chains).
+    // If non-empty, Thai subtitles will render as '?'.
+    std::vector<std::string> missing_thai_fonts;
 };
 
 // Loads the chains from `font_dir` (the app's fonts folder) and uploads their

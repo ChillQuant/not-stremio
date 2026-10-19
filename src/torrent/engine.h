@@ -65,6 +65,16 @@ public:
 	// Which file will be played: its pieces come first.
 	void select_file(const std::string& info_hash_hex, int file_idx);
 
+	// Next-episode prefetch (Worker 9): downloads the first `bytes` of the
+	// episode's file into the torrent's rolling cache, in the background, so
+	// the next episode starts instantly. Refuses (false) when another torrent
+	// is being watched — the engine runs one torrent at a time and must never
+	// steal it. A new prefetch supersedes the old; cancel with
+	// prefetch_cancel(). season/episode pick the file (guess_file).
+	bool prefetch_file(const std::string& info_hash_hex, const std::vector<std::string>& trackers,
+	                   int season, int episode, int64_t bytes);
+	void prefetch_cancel();
+
 	Stats stats(const std::string& info_hash_hex);
 
 	// For TorrentStream. A reader holds the torrent; while any reader is

@@ -27,6 +27,14 @@ void Tasks::run(std::function<void()> work) {
 	cv_.notify_one();
 }
 
+void Tasks::run_urgent(std::function<void()> work) {
+	{
+		std::lock_guard<std::mutex> lock(mutex_);
+		work_.push_front(std::move(work));
+	}
+	cv_.notify_one();
+}
+
 void Tasks::post(std::function<void()> fn) {
 	std::lock_guard<std::mutex> lock(ui_mutex_);
 	ui_.push_back(std::move(fn));

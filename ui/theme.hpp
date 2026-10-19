@@ -26,10 +26,20 @@ inline const Color hairline = Color::rgb(0xffffff, 0.10f);
 inline const Color watched = Color::rgb(0x22b365);
 inline const Color imdb = Color::rgb(0xf5c518);
 
+// Glass Phase 1: frosted-glass surfaces. The visual language (translucent
+// dark fill + 1px inner rim light + soft drop shadow over a blurred backdrop)
+// is inspired by Fxy6969's "liquid-glass" Stremio theme; the blur itself comes
+// from the toolkit's DrawList::glass over renderer.glass_texture().
+inline const Color glass_fill = Color::rgb(0x464646, 0.22f);    // dark glass pill fill
+inline const Color glass_deep = Color::rgb(0x000000, 0.41f);    // Watch-button glass
+inline const Color glass_hair = Color::rgb(0xffffff, 0.10f);    // 1px rim
+inline const Color glass_hair_hi = Color::rgb(0xffffff, 0.20f);// active/focus rim
+// accent stays violet: Stremio's identity, unlike the web theme's white flip.
+
 // Layout (virtual pixels).
-constexpr float kRailWidth = 140.0f;  // the left navigation
-constexpr float kLeft = 190.0f;       // where page content starts
-constexpr float kRight = 1860.0f;     // where it ends
+constexpr float kRailWidth = 0.0f;    // top horizontal pill nav (no left sidebar)
+constexpr float kLeft = 64.0f;        // where page content starts
+constexpr float kRight = 1856.0f;     // where it ends (1920 - 64)
 constexpr float kScreenW = 1920.0f;
 constexpr float kScreenH = 1080.0f;
 

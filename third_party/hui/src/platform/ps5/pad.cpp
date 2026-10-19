@@ -8,6 +8,18 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+
+extern "C" int scePadReadState(int handle, void *data);
+
+// Latest 120-byte ScePadData from the active controller, exported for
+// gl/touchpad.cpp. Pad::read() already receives these bytes every frame;
+// the touchpad region (0x34..0x4B) was previously discarded.
+extern "C" {
+std::uint8_t g_ps5_latest_pad_raw[120] = {};
+bool g_ps5_latest_pad_valid = false;
+int g_ps5_pad_handle = -1;
+}
 
 namespace
 {
@@ -96,6 +108,7 @@ bool Pad::open()
         handle_ = scePadOpen(user_, 0, 0, nullptr);
         if (handle_ >= 0)
         {
+            g_ps5_pad_handle = handle_;
             const int mode = scePadSetVibrationMode(handle_, kVibrationModeCompatible);
             sys::log("[HUI] pad open user=0x%08x handle=%d attempts=%d vibration_mode=0x%x",
                      static_cast<unsigned>(user_), handle_, attempt + 1,
@@ -157,6 +170,8 @@ void Pad::close()
         scePadClose(handle_);
     }
     handle_ = -1;
+    g_ps5_pad_handle = -1;
+    g_ps5_latest_pad_valid = false;
     if (owns_user_service_)
         sceUserServiceTerminate();
     owns_user_service_ = false;
@@ -175,7 +190,17 @@ std::size_t Pad::read(std::span<PadSample> out)
     const int limit = static_cast<int>(out.size() < 64 ? out.size() : 64);
     const int count = scePadRead(handle_, raw, limit);
     if (count <= 0)
+    {
+        // No new ring-buffer samples this frame: fall back to the current
+        // state so touch position stays fresh every frame.
+        if (scePadReadState(handle_, g_ps5_latest_pad_raw) == 0)
+            g_ps5_latest_pad_valid = true;
         return 0;
+    }
+    // Export the newest sample's raw bytes (including touchpad region
+    // 0x34..0x4B) for gl/touchpad.cpp.
+    std::memcpy(g_ps5_latest_pad_raw, &raw[count - 1], 120);
+    g_ps5_latest_pad_valid = true;
     for (int index = 0; index < count; ++index)
     {
         const RawPadSample &r = raw[index];

@@ -125,7 +125,13 @@ bool Ime::open()
     g_param.vertical_alignment = 0;
     g_param.pos_x = 1890.0f;
     g_param.pos_y = 30.0f;
-    const int r = sceImeDialogInit(&g_param, nullptr);
+    int r = sceImeDialogInit(&g_param, nullptr);
+    if (r != 0)
+    {
+        // Stale OS dialog state from a previous session/close: terminate and retry once.
+        sceImeDialogTerm();
+        r = sceImeDialogInit(&g_param, nullptr);
+    }
     if (r != 0)
     {
         dlog("ime: sceImeDialogInit 0x%08x", static_cast<unsigned>(r));
@@ -170,6 +176,12 @@ Ime::State Ime::poll(std::string *text)
     sceImeDialogTerm();
     active_ = false;
     return out;
+}
+
+void Ime::close() {
+    if (!active_) return;
+    sceImeDialogTerm();
+    active_ = false;
 }
 
 } // namespace sx

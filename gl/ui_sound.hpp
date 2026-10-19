@@ -2,6 +2,15 @@
 // They come from ps5-homebrew-ui's sound bank (the "glass" set, in <app>/sounds/glass) and play
 // through its mixer on the console's audio port.
 //
+// Sound design (all quiet; the ui bus sits at 0.7):
+//   focus  = soft tick (focus_02.wav, 50ms), very quiet, pitch rising slightly with move speed
+//   select = warm "thock": the glass set records no select file, so the bank's
+//            synthesized fallback plays (triangle 740->880 Hz, 80ms), gain-shaped here
+//   back   = descending blip (back_01.wav, 200ms)
+//   error  = muted dull tap (error_01.wav, 280ms), min 300ms between taps
+// A cue asked for while the player has the port is dropped: UI sounds never
+// play during video playback.
+//
 // The console gives the app one audio port at a time: while a video plays, the player has it.
 // The player asks for it when it starts (AudioPort::player_wants) and this lets go of it, then
 // takes it back when the player is done.

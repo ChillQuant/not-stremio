@@ -13,8 +13,16 @@ namespace sx
 // A poster with its name beneath. `rect` is the poster; `scale` is the focus
 // pop (1 = resting), `enter` the entrance (0..1). show_progress draws the
 // resume bar and episode badge.
-void draw_poster_card(hui::gfx::DrawList &list, const Env &env, const Title &title, const hui::gfx::Rect &rect,
-                      float scale, float enter, bool focused, bool show_progress);
+// Glass Phase 1: bg takes the poster, progress, badge and title; fg takes the
+// focus play disc and the watched pill (both frosted glass over the poster).
+void draw_poster_card(hui::gfx::DrawList &bg, hui::gfx::DrawList &fg, const Env &env, const Title &title,
+                      const hui::gfx::Rect &rect, float scale, float enter, bool focused, bool show_progress);
+
+// A 16:9 landscape card for Continue Watching: backdrop (or centre-cropped
+// poster) with a vignette, progress bar, badge, frosted-glass play disc in
+// the centre, and a two-line footer beneath.
+void draw_landscape_card(hui::gfx::DrawList &bg, hui::gfx::DrawList &fg, const Env &env, const Title &title,
+                         const hui::gfx::Rect &rect, float scale, float enter, bool focused);
 
 // "Type  Movie v": a drop-down choice. Returns its width.
 // max_value (0 = none) cuts a long value short with an ellipsis.

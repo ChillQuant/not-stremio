@@ -182,6 +182,14 @@ Meta parse_meta(const json& j) {
 	if (m.genres.empty()) m.genres = str_array(jobj(j, "genre"));
 	m.cast = str_array(jobj(j, "cast"));
 	m.directors = str_array(jobj(j, "director"));
+	m.writers = str_array(jobj(j, "writer"));
+	const json& trailers = jobj(j, "trailers");
+	if (trailers.is_array()) {
+		for (auto& t : trailers) {
+			std::string src = jstr(t, "source");
+			if (!src.empty()) m.trailer_youtube_ids.push_back(src);
+		}
+	}
 	// Newer addons use "links" with categories instead.
 	const json& links = jobj(j, "links");
 	if (links.is_array()) {
@@ -241,11 +249,20 @@ std::vector<Stream> parse_streams(const json& j, const std::string& addon_name) 
 		// YouTube and external links can't be played here.
 		if (!st.playable()) continue;
 		if (starts_with(st.url, "magnet:")) {
-			// magnet:?xt=urn:btih:<hash>
+			// magnet:?xt=urn:btih:<hash>[&dn=...]
 			size_t p = st.url.find("btih:");
 			if (p != std::string::npos) {
-				st.info_hash = lower(st.url.substr(p + 5, 40));
-				st.url.clear();
+				std::string h = st.url.substr(p + 5);
+				const size_t amp = h.find('&');
+				if (amp != std::string::npos) h.resize(amp);
+				h = lower(h);
+				// 40-char hex or 32-char base32; anything else is garbage.
+				const bool hex40 = h.size() == 40 && h.find_first_not_of("0123456789abcdef") == std::string::npos;
+				const bool b32 = h.size() == 32 && h.find_first_not_of("abcdefghijklmnopqrstuvwxyz234567") == std::string::npos;
+				if (hex40 || b32) {
+					st.info_hash = h;
+					st.url.clear();
+				} else continue;
 			} else continue;
 		}
 		out.push_back(st);

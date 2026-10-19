@@ -61,7 +61,8 @@ struct Meta {
 	std::string id, type, name;
 	std::string poster, background, logo;
 	std::string description, release_info, runtime, imdb_rating, year;
-	std::vector<std::string> genres, cast, directors;
+	std::vector<std::string> genres, cast, directors, writers;
+	std::vector<std::string> trailer_youtube_ids; // Cinemeta "trailers" (YouTube IDs, not playable directly)
 	std::vector<Video> videos;
 };
 

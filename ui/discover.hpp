@@ -7,6 +7,8 @@
 #include "grid.hpp"
 #include "page.hpp"
 
+#include <algorithm>
+
 namespace sx
 {
 
@@ -26,21 +28,35 @@ class Discover : public PageBase
     {
         return grid_.index();
     }
+    // Restore a saved grid position (nav_memory).
+    void set_cursor(int idx)
+    {
+        grid_.set_index(idx);
+    }
     // The filter under the cursor, or -1 while it is on the posters or the rail.
     int filter_cursor() const
     {
         return in_filters_ && !rail_.focused() ? filter_ : -1;
     }
     void update(const hui::InputFrame &input, float dt);
-    void draw(hui::gfx::DrawList &list, hui::gfx::BackdropSpec &backdrop) const;
+    void draw(hui::gfx::DrawList &bg, hui::gfx::DrawList &fg, hui::gfx::BackdropSpec &backdrop) const;
     // The poster under the cursor, null while the cursor is on a filter or the rail.
     const Title *focused_title() const
     {
         return in_filters_ || rail_.focused() ? nullptr : grid_.focused();
     }
+    // True when the cursor sits in the last row of the grid: the session
+    // should fetch the next page (infinite scroll).
+    bool at_end() const
+    {
+        if (!content_ || content_->items.empty() || in_filters_ || rail_.focused())
+            return false;
+        const int n = static_cast<int>(content_->items.size());
+        return grid_.index() >= n - std::min(grid_.cols(), n);
+    }
 
   private:
-    void draw_preview(hui::gfx::DrawList &list, const Title &title) const;
+    void draw_preview(hui::gfx::DrawList &fg, const Title &title) const;
 
     const DiscoverContent *content_ = nullptr;
     PosterGrid grid_;

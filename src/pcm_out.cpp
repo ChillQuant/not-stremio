@@ -23,14 +23,16 @@ const int kAlreadyInitialized = int(0x8026000e);
 const int kSystemUser = 0xff;
 const int kPortMain = 0;
 const unsigned kFormatS16Stereo = 1;
+const unsigned kFormatS16_8Ch = 2;  // discrete 7.1; the console takes it from a homebrew slot
 #endif
 }  // namespace
 
 std::atomic<bool> AudioPort::player_wants{false};
 std::atomic<bool> AudioPort::ui_holds{false};
 
-bool PcmOut::open() {
+bool PcmOut::open(int channels) {
 	if (open_) return true;
+	if (channels != 8) channels = 2;
 #ifdef PLATFORM_PS5_NATIVE
 	// The interface may have the port: say we want it, and give it up to 1.5 s to let go.
 	AudioPort::player_wants = true;
@@ -44,7 +46,13 @@ bool PcmOut::open() {
 		AudioPort::player_wants = false;
 		return false;
 	}
-	handle_ = sceAudioOutOpen(kSystemUser, kPortMain, 0, kGrainFrames, kRate, kFormatS16Stereo);
+	handle_ = sceAudioOutOpen(kSystemUser, kPortMain, 0, kGrainFrames, kRate,
+	                          channels == 8 ? kFormatS16_8Ch : kFormatS16Stereo);
+	if (handle_ < 0 && channels == 8) {
+		dlog("audio: 8-channel output refused (0x%08x), falling back to stereo", unsigned(handle_));
+		channels = 2;
+		handle_ = sceAudioOutOpen(kSystemUser, kPortMain, 0, kGrainFrames, kRate, kFormatS16Stereo);
+	}
 	if (handle_ < 0) {
 		dlog("audio: sceAudioOutOpen 0x%08x", unsigned(handle_));
 		handle_ = -1;
@@ -52,6 +60,7 @@ bool PcmOut::open() {
 		return false;
 	}
 #endif
+	channels_ = channels;
 	{
 		std::lock_guard<std::mutex> lock(m_);
 		ring_.clear();
@@ -113,15 +122,17 @@ void* PcmOut::thread_main(void* self) {
 }
 
 void PcmOut::run() {
-	alignas(64) int16_t grain[kGrainFrames * 2];
-	const size_t grain_bytes = sizeof(grain);
+	// One grain per port write, sized for the channel count that actually opened.
+	const size_t grain_bytes = size_t(kGrainFrames) * size_t(channels_) * sizeof(int16_t);
+	std::vector<int16_t> grain(grain_bytes / sizeof(int16_t));
+	bool was_silent = true;
 	while (!stop_) {
 		size_t got = 0;
 		if (!paused_) {
 			std::lock_guard<std::mutex> lock(m_);
 			got = std::min(grain_bytes, ring_.size() - head_);
 			if (got) {
-				std::memcpy(grain, ring_.data() + head_, got);
+				std::memcpy(grain.data(), ring_.data() + head_, got);
 				head_ += got;
 				if (head_ == ring_.size()) {
 					ring_.clear();
@@ -129,9 +140,22 @@ void PcmOut::run() {
 				}
 			}
 		}
-		if (got < grain_bytes) std::memset(reinterpret_cast<uint8_t*>(grain) + got, 0, grain_bytes - got);
+		if (got < grain_bytes) std::memset(reinterpret_cast<uint8_t*>(grain.data()) + got, 0, grain_bytes - got);
+		// Anti-pop: when transitioning from silence to audio, ramp the first
+		// grain linearly (256 frames = 5.3 ms) so the speaker doesn't click.
+		if (got > 0 && was_silent) {
+			const int frames_got = int(got / (size_t(channels_) * sizeof(int16_t)));
+			for (int f = 0; f < frames_got; ++f) {
+				const int32_t num = f + 1;
+				for (int c = 0; c < channels_; ++c) {
+					int16_t& s = grain[size_t(f * channels_ + c)];
+					s = int16_t((int32_t(s) * num) / frames_got);
+				}
+			}
+		}
+		was_silent = (got == 0);
 #ifdef PLATFORM_PS5_NATIVE
-		if (sceAudioOutOutput(handle_, grain) < 0) {
+		if (sceAudioOutOutput(handle_, grain.data()) < 0) {
 			struct timespec ts = {0, 5000000};
 			nanosleep(&ts, nullptr);
 		}

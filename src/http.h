@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -16,8 +17,10 @@ struct HttpResponse {
 void http_init(const std::string& ca_bundle_path);
 
 // Blocking requests, for worker threads. `cancel` may be flipped to abort.
+// `max_body` caps the response size (CURLE_WRITE_ERROR past it).
 HttpResponse http_get(const std::string& url, long timeout_s = 20, const std::atomic<bool>* cancel = nullptr,
-                      const std::vector<std::string>& headers = {});
+                      const std::vector<std::string>& headers = {},
+                      std::size_t max_body = 32u * 1024 * 1024);
 HttpResponse http_post_json(const std::string& url, const std::string& body, long timeout_s = 20,
                             const std::atomic<bool>* cancel = nullptr);
 

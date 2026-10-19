@@ -4,8 +4,9 @@
 //   SDR: studio-range YUV with the BT.601 (SD) or BT.709 (HD) matrix;
 //   HDR10 (PQ, BT.2020): the BT.2020 matrix, the PQ curve to light, tone
 //   mapping (Hable, as FFmpeg's tonemap filter), BT.2020 to BT.709
-//   primaries, then the BT.709 curve. Shown as plain SDR, HDR pictures
-//   looked pale and purple (PS5 2026-10-06).
+//   primaries, then the BT.709 curve. HLG (BT.2100): the same pipeline with
+//   the inverse HLG OETF instead of the PQ curve. Shown as plain SDR; HDR
+//   pictures looked pale and purple before tone mapping (PS5 2026-10-06).
 //
 // Pure C++ with no FFmpeg or SDL, so it can be checked on a PC against
 // FFmpeg's own conversion.
@@ -24,7 +25,10 @@ struct YuvPicture {
 	int width = 0, height = 0;
 };
 
-enum class YuvColors { Bt601, Bt709, Hdr10 };
+enum class YuvColors { Bt601, Bt709, Hdr10, Hlg, DoviP5 };
+// DoviP5: Dolby Vision Profile 5. The planes hold reshaped IPT-PQ-c2, not
+// YCbCr; the converter reshapes them to HDR10 (reference matrices, v1) and
+// they flow through the HDR10 tone-mapping path.
 
 // Rows [row_begin, row_end) of the out_w x out_h RGBA output; out_w/out_h is
 // the picture's size (scale 1) or half of it (scale 2). Safe to call from
