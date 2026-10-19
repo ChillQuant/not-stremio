@@ -31,6 +31,9 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 - Thai subtitle decoding (TIS-620) instead of mojibake
 - Noto Sans Thai bundled into the UI font chain
 - Thai combining-mark shaping via the font's GPOS anchors ([upstream PR #10](https://github.com/Sp9nky/unofficial-stremio-ps5-port/pull/10))
+- Subtitle encodings 1250/1251/1254/1255/1257/1258; ASS parser crash fixed
+- Internal subtitles preferred over external (usefulness scorer)
+- Subtitle background opacity slider (0–100%, 5% steps, ✕ resets to 55%)
 - Subtitle pre-parse before playback starts
 - L2/R2 subtitle delay ±0.25s in player
 
@@ -56,7 +59,12 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 ### Search
 - Index pre-built at boot; no input debounce
 - Streaming results with 6s addon timeout and cursor-stable incremental rows
+- Catalog pagination
 - IME busy-race retry; sync local fallback scan; 5s search timeout
+
+### Detail page
+- "More actions" menu (Options button): mark series watched/unwatched, remove from library (2-press confirm)
+- Episode synopsis
 
 ### Streaming engine
 - 6 parallel chunk downloads, 2MB chunks
@@ -69,10 +77,17 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 
 ### Playback
 - Seek: 0.25s start gate, 15s keyframe snap, stale-frame drain on seek
-- Playback speed control; watched-sync
+- Seeking freezes the last frame while the decoder catches up (no black flash)
+- Playback speed control (0.5x/1x/1.5x/2x); watched-sync
+- "Still watching?" prompt (Off / every 3 / 5 / 10 episodes; 60s of no input returns to Detail)
 - DualSense touchpad volume: swipe up/down on the touchpad during playback for continuous 0–200% master volume (follows the finger like a slider; on-screen bar OSD; boost zone above 100%)
+- D-pad Down toggles zoom Fit/Fill; R3 toggles Stats for Nerds
+- Stream failures report distinct causes (dead link, unready server, connection failure, torrent not ready) with what to try next
 - Hardware decoder: unconditional slot renewal on flush; VDEC frame-buffer DMA race fixed
-- Audio: HDMI init handling; zero-copy IEC61937 bursts; halved passthrough sleeps
+
+### Audio
+- Night mode (dynamic range compression); surround / passthrough options
+- HDMI init handling; zero-copy IEC61937 bursts; halved passthrough sleeps
 
 ### Episode continuity
 - Seamless in-player Play Next (video frame held, no loading modal; 8s stall fallback)
@@ -90,11 +105,14 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 ### Picture
 - Upscaler options: Cinema HQ (anti-ringing bicubic + RCAS), FSR1 + sharpening, Anime4K shaders
 - Bilateral chroma upsampling + debanding; Dolby Vision P5 fix; gamut-safe tone mapping
+- Motion smoothing option; 119.88Hz film mode (match frame rate)
 - SDR tone-mapping polish; HDR10 diagnostic probe; 8-bit SDR shader fast path
+- 4K output via GPU color conversion (CPU fallback); plain-language diagnostics when 4K falls back to software decoding
 - OSD upscaler badge + nerd stats; volume OSD and hint bar clearance
 
 ### Settings
 - Live per-choice descriptions under every setting (12 helpers: upscaler, sharpening, tone mapping, audio, etc.)
+- Storage section: Clear Cache button with live cache size (press-twice to confirm; keeps sign-in, settings, Continue Watching)
 - Artwork disk cache capped at 512MB with boot-time prune; cache size refreshes live on the Settings page
 - Accessibility settings page; haptics and hints options; reduce-motion fade
 
@@ -111,6 +129,7 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 ### Design language
 - Glass theme: frosted surfaces, 1px rim light, soft shadows, neutral-black dimming
 - Unified navigation capsule; stream picker with glass badges; Discover glass preview
+- Loading progress shown inside the artwork/logo itself — no separate progress ring
 - Inspired by Fxy6969's "liquid-glass" Stremio theme (via Stremio Enhanced) — re-implemented natively for the PS5 UI toolkit
 
 ## Screenshots
@@ -161,10 +180,13 @@ The app keeps its settings, artwork cache, read-ahead caches and log in its own 
 | | □ | play with the streaming server |
 | Player | ✕ or touchpad | pause / play |
 | | D-pad left / right | seek 10 s |
+| | D-pad down | zoom Fit / Fill |
 | | L1 / R1 | seek 1 min |
 | | L3 | back to the start |
+| | touchpad swipe up / down | volume up / down |
 | | □ / △ | next subtitle / next audio track |
 | | L2 / R2 | subtitle delay -/+ 0.25 s |
+| | R3 | stats for nerds |
 | | D-pad up or Options | track menu |
 | | ○ | stop |
 
