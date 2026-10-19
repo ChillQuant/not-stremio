@@ -1,5 +1,7 @@
 # Not Stremio
 
+![Not Stremio](docs/not-stremio-hero.jpg)
+
 **A fork of [Sp9nky's unofficial Stremio PS5 port](https://github.com/Sp9nky/unofficial-stremio-ps5-port), focused on Thai subtitle support, playback performance, and a glass interface.**
 
 > [!IMPORTANT]
@@ -102,7 +104,14 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 
 ## Screenshots
 
-See upstream's [screenshots](https://github.com/Sp9nky/unofficial-stremio-ps5-port#screenshots) — the app looks the same; this fork changes how it behaves.
+Real captures from the fork, framed:
+
+| | |
+|---|---|
+| ![Discover](docs/screenshots/discover.jpg) | ![Library](docs/screenshots/library.jpg) |
+| *Discover* | *Library* |
+| ![Addons](docs/screenshots/addons.jpg) | |
+| *Addons* | |
 
 ## Requirements
 
