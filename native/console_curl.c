@@ -316,13 +316,6 @@ __asm__(".text\n"
         "_longjmp:\n"
         "    jmp *longjmp@GOTPCREL(%rip)\n");
 
-void openlog(const char *identifier, int option, int facility)
-{
-    (void)identifier;
-    (void)option;
-    (void)facility;
-}
-
 void closelog(void)
 {
 }
@@ -373,37 +366,6 @@ ssize_t sendmmsg(int socket, struct mmsghdr *restrict messages, size_t count, in
     (void)messages;
     (void)count;
     (void)flags;
-    errno = ENOSYS;
-    return -1;
-}
-
-FILE *popen(const char *command, const char *mode)
-{
-    (void)command;
-    (void)mode;
-    errno = ENOSYS;
-    return NULL;
-}
-
-int pclose(FILE *stream)
-{
-    (void)stream;
-    errno = ENOSYS;
-    return -1;
-}
-
-/* These two link from libScePosixForWebKit, which a native title does not
- * load: without a definition they are null imports. */
-int isatty(int descriptor)
-{
-    (void)descriptor;
-    errno = ENOTTY;
-    return 0;
-}
-
-int mkstemp(char *template_name)
-{
-    (void)template_name;
     errno = ENOSYS;
     return -1;
 }

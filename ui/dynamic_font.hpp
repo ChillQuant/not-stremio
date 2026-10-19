@@ -55,6 +55,12 @@ class TtfChain : public hui::gfx::GlyphSource
     }
     // Vertical metrics of the first face at pixel_size().
     void metrics(float *ascent, float *descent, float *line_gap) const;
+    // Thai font files that were requested but could not be loaded. Used to
+    // warn the user (Thai subtitles render as '?' without them).
+    const std::vector<std::string> &missing_thai() const
+    {
+        return missing_thai_;
+    }
 
   private:
     struct Face
@@ -67,6 +73,8 @@ class TtfChain : public hui::gfx::GlyphSource
     // MODIFIED for Stremio for PS5: index of the Thai face in faces_ (-1 if
     // none). Variant glyphs (.small/.narrow) are rasterized from this face.
     int thai_face_ = -1;
+    // Thai font files that failed to load (for user warning).
+    std::vector<std::string> missing_thai_;
     float pixel_size_;
     float range_;
 };
@@ -78,6 +86,9 @@ struct UiFonts
     hui::gfx::Font regular, semibold, display;
     // Pre-baked faces for what is only ever ASCII.
     hui::gfx::Font mono, pixel, hand;
+    // Thai font files that could not be loaded (union across chains).
+    // If non-empty, Thai subtitles will render as '?'.
+    std::vector<std::string> missing_thai_fonts;
 };
 
 // Loads the chains from `font_dir` (the app's fonts folder) and uploads their

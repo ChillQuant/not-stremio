@@ -2,11 +2,14 @@
 """Lists functions the native app imports from modules the PS5 doesn't load
 into an app. Those imports stay at address 0, so calling one crashes.
 
-usage: check_imports.py <linked pie.elf> <sdk target/lib> [<more stub dirs>...]
+usage: check_imports.py [--warn-only] <linked pie.elf> <sdk target/lib> [<more stub dirs>...]
+
+Exits 1 when an import has no SDK stub or resolves to a module the PS5 doesn't
+load (--warn-only keeps the old behaviour: print and exit 0).
 
 The loaded set is what the kernel log listed for a native media app on 11.60
 (the module list printed with a crash)."""
-import glob, os, subprocess, sys
+import argparse, glob, os, subprocess, sys
 
 LOADED = {
     "libkernel", "libkernel_web", "libkernel_sys", "libSceLibcInternal", "libc_stub_weak",
@@ -29,8 +32,15 @@ def symbols(path, *flags):
     return {line.split()[-1] for line in out.splitlines() if line.strip()}
 
 
-def main():
-    pie, libdirs = sys.argv[1], sys.argv[2:]
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        description="Fail the build when the native app imports a function the PS5 won't resolve.")
+    ap.add_argument("--warn-only", action="store_true",
+                    help="print problems but exit 0 (manual/inspection runs)")
+    ap.add_argument("pie", help="the linked pie.elf")
+    ap.add_argument("libdirs", nargs="+", help="sdk target/lib and stub dirs")
+    args = ap.parse_args(argv)
+    pie, libdirs = args.pie, args.libdirs
     wanted = symbols(pie, "-D", "--undefined-only")
     owner = {}
     stubs = [so for d in libdirs for so in sorted(glob.glob(os.path.join(d, "*.so")))]
@@ -48,6 +58,9 @@ def main():
             print(f"  {module}: {name}")
     else:
         print(f"imports ok: {len(owner)} functions, all from loaded modules")
+    if (unresolved or missing) and not args.warn_only:
+        sys.exit(1)
 
 
-main()
+if __name__ == "__main__":
+    main()

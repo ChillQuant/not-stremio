@@ -49,10 +49,6 @@ void utf8_put(std::string& out, uint32_t cp) {
 	}
 }
 
-bool is_rtl(uint32_t cp) {
-	return (cp >= 0x0590 && cp <= 0x08ff) || (cp >= 0xfb1d && cp <= 0xfdff) || (cp >= 0xfe70 && cp <= 0xfeff);
-}
-
 // RML entities used by subtitles (subtitles.cpp) back to text, and the text
 // escaped again afterwards.
 std::string unescape(const std::string& s) {
@@ -146,7 +142,15 @@ std::string bidi_visual_rml(const std::string& rml) {
 		std::string line = rml.substr(start, br == std::string::npos ? std::string::npos : br - start);
 		if (has_rtl(line)) {
 			// Text without its tags, reordered; italics/bold for the whole line.
+			// The whole-cue color span is preserved too (the single-color rule
+			// guarantees at most one).
 			bool em = line.find("<em>") != std::string::npos, strong = line.find("<strong>") != std::string::npos;
+			std::string color_open;
+			size_t sp = line.find("<span");
+			if (sp != std::string::npos) {
+				size_t se = line.find('>', sp);
+				if (se != std::string::npos) color_open = line.substr(sp, se - sp + 1);
+			}
 			std::string text;
 			for (size_t i = 0; i < line.size(); i++) {
 				if (line[i] == '<') {
@@ -161,6 +165,7 @@ std::string bidi_visual_rml(const std::string& rml) {
 			line = escape(bidi_visual(unescape(text)));
 			if (strong) line = "<strong>" + line + "</strong>";
 			if (em) line = "<em>" + line + "</em>";
+			if (!color_open.empty()) line = color_open + line + "</span>";
 		}
 		out += line;
 		if (br == std::string::npos) break;

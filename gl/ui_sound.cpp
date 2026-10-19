@@ -37,6 +37,37 @@ double min_gap_seconds(hui::audio::Cue cue)
     }
 }
 
+// The focus tick rises slightly the faster you move: 1.00x strolling, ~1.18x flying.
+// gap is the seconds since the last focus cue.
+float focus_pitch(double gap)
+{
+    constexpr double kSlow = 0.30, kFast = 0.045, kTop = 1.18;
+    if (gap >= kSlow)
+        return 1.0f;
+    if (gap <= kFast)
+        return static_cast<float>(kTop);
+    const double t = (kSlow - gap) / (kSlow - kFast);
+    return static_cast<float>(1.0 + (kTop - 1.0) * t);
+}
+
+// Per-cue loudness on top of the quiet bus gain: the focus tick stays very
+// quiet, the error tap is muted and dull, select is present but soft.
+float cue_gain(hui::audio::Cue cue)
+{
+    using hui::audio::Cue;
+    switch (cue)
+    {
+    case Cue::focus:
+        return 0.55f;
+    case Cue::error:
+        return 0.50f;
+    case Cue::select:
+        return 0.80f;
+    default:
+        return 0.70f;
+    }
+}
+
 } // namespace
 
 struct UiSound::Impl
@@ -118,14 +149,22 @@ void UiSound::play(hui::audio::Cue cue)
 {
     if (!enabled_ || !impl_->open)
         return;
+    // Never during video playback: the player owns the audio port then, and a
+    // UI sound must never leak over it.
+    if (AudioPort::player_wants.load())
+        return;
     const std::size_t i = static_cast<std::size_t>(cue);
     const Clock::time_point now = Clock::now();
-    if (std::chrono::duration<double>(now - impl_->last[i]).count() < min_gap_seconds(cue))
+    const double gap = std::chrono::duration<double>(now - impl_->last[i]).count();
+    if (gap < min_gap_seconds(cue))
         return;
     impl_->last[i] = now;
     hui::audio::CueEvent event;
     event.cue = cue;
     event.set = hui::audio::SoundSet::glass;
+    event.gain = cue_gain(cue);
+    if (cue == hui::audio::Cue::focus)
+        event.pitch = focus_pitch(gap);
     impl_->bank.play(impl_->mixer, hui::audio::SoundSet::glass, event);
 }
 

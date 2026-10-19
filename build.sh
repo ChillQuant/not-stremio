@@ -34,10 +34,21 @@ need_apt() {
 # Toolchain: the PS5 payload SDK with prebuilt FFmpeg, curl, libwebp, ...
 need_apt clang-18 lld-18 llvm-18 cmake make pkg-config python3 wget zip git ninja-build ccache python3-venv unzip curl
 
+# The payload SDK is a pinned release, verified by SHA-256 before extraction
+# (same pin-and-verify pattern as the toolkit's fetch-opengl-sdk.sh).
+# To move the pin: export PS5_PAYLOAD_TAG=<tag> and PS5_PAYLOAD_SHA256=<hex>
+# together; a mismatched checksum fails the download closed.
+PACBREW_TAG="${PS5_PAYLOAD_TAG:-v0.41.1}"
+PACBREW_SHA256="${PS5_PAYLOAD_SHA256:-e811bc2e4676c5bb7f80a8fe928d2985dce599996a5ca6b54da3e72699287887}"
 if ! [ -e "$SDK/target/user/homebrew/lib/libavformat.a" ]; then
-    echo ">> downloading the PS5 payload SDK + libraries (about 330 MB)"
+    echo ">> downloading the PS5 payload SDK + libraries ($PACBREW_TAG, about 218 MB)"
     wget -q --show-progress -O /tmp/ps5-payload-dev.tar.gz \
-        https://github.com/ps5-payload-dev/pacbrew-repo/releases/latest/download/ps5-payload-dev.tar.gz
+        "https://github.com/ps5-payload-dev/pacbrew-repo/releases/download/$PACBREW_TAG/ps5-payload-dev.tar.gz"
+    echo "$PACBREW_SHA256  /tmp/ps5-payload-dev.tar.gz" | sha256sum --check --status || {
+        echo "ps5-payload-dev SDK archive checksum mismatch ($PACBREW_TAG)" >&2
+        rm -f /tmp/ps5-payload-dev.tar.gz
+        exit 2
+    }
     sudo tar xf /tmp/ps5-payload-dev.tar.gz -C /
     rm -f /tmp/ps5-payload-dev.tar.gz
 fi

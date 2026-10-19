@@ -24,6 +24,8 @@ class Ime
     bool open();
     // Once per frame while a dialog is up.
     State poll(std::string *text);
+    // Force-close the dialog (e.g. when phone IME submits).
+    void close();
     bool active() const
     {
         return active_;

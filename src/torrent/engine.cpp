@@ -19,6 +19,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <deque>
+#include <dirent.h>
 #include <map>
 #include <mutex>
 #include <set>
@@ -137,7 +138,13 @@ std::string addr_str(const sockaddr_in& a) {
 
 bool usable(const sockaddr_in& a) {
 	uint32_t ip = ntohl(a.sin_addr.s_addr);
-	return ip != 0 && (ip >> 24) != 127 && (ip >> 24) != 0 && ntohs(a.sin_port) != 0 && (ip >> 28) < 14;
+	if (ip == 0 || ntohs(a.sin_port) == 0 || (ip >> 28) >= 14) return false;
+	uint32_t b0 = ip >> 24, b1 = (ip >> 16) & 0xff;
+	if (b0 == 0 || b0 == 10 || b0 == 127) return false;
+	if (b0 == 172 && (b1 >= 16 && b1 <= 31)) return false;
+	if (b0 == 192 && b1 == 168) return false;
+	if (b0 == 169 && b1 == 254) return false;
+	return true;
 }
 
 // Compact peers: 4 bytes IPv4 + 2 bytes port each.
@@ -289,6 +296,8 @@ struct Torrent {
 	std::map<int, int64_t> readers;
 	int next_reader = 1;
 	double last_reader = 0;
+	// Watchdog: when the last piece completed (for stall detection)
+	double last_piece_at = 0;
 
 	// Download order, refreshed when readers move
 	std::vector<int> wanted;
@@ -470,6 +479,15 @@ void refresh_wanted(Torrent* t) {
 			if (!t->have[size_t(p)] && seen.insert(p).second) t->wanted.push_back(p);
 	}
 
+	// Once the first piece of the video file is here, grab the final piece
+	// (where Matroska Cues / MP4 trailing moov atoms live) so the first seek
+	// doesn't stall waiting for the end of the file.
+	const int first_file_piece = int(f.offset / t->plen);
+	if (t->have[size_t(first_file_piece)] && !t->have[size_t(last)] && seen.insert(last).second) {
+		const size_t insert_at = std::min<size_t>(2, t->wanted.size());
+		t->wanted.insert(t->wanted.begin() + long(insert_at), last);
+	}
+
 	// After a jump the peers are still busy with blocks for the old spot:
 	// call those off, so the new spot comes first, and drop the half-done
 	// pieces nobody needs now (they'd hold memory and request slots).
@@ -570,9 +588,16 @@ void pick(Torrent* t, Peer* p, double now) {
 // ---------------------------------------------------------------------------
 // Cache
 
+// Slot data starts after the fixed header plus the per-slot piece map.
+// (Moved up here: slot_write/slot_read must add this offset; without it the
+// first stored piece would wipe the header and corrupt the file.)
+const int64_t kCacheHeaderLen = 48;  // magic + ih + npieces + plen + nslots
+
+static int64_t cache_data_off(int nslots) { return kCacheHeaderLen + int64_t(4) * nslots; }
+
 bool slot_write(Torrent* t, int slot, const std::string& data) {
 	if (t->cache) {
-		if (fseeko(t->cache, off_t(slot) * t->plen, SEEK_SET) == 0 &&
+		if (fseeko(t->cache, cache_data_off(t->nslots) + off_t(slot) * t->plen, SEEK_SET) == 0 &&
 		    fwrite(data.data(), 1, data.size(), t->cache) == data.size() && fflush(t->cache) == 0)
 			return true;
 		dlog("torrent: cache file write failed (errno %d); keeping pieces in memory", errno);
@@ -598,7 +623,7 @@ bool slot_write(Torrent* t, int slot, const std::string& data) {
 
 bool slot_read(Torrent* t, int slot, int64_t off, uint8_t* buf, int n) {
 	if (t->cache) {
-		return fseeko(t->cache, off_t(slot) * t->plen + off, SEEK_SET) == 0 &&
+		return fseeko(t->cache, cache_data_off(t->nslots) + off_t(slot) * t->plen + off, SEEK_SET) == 0 &&
 		       fread(buf, 1, size_t(n), t->cache) == size_t(n);
 	}
 	const std::string& s = t->ram[size_t(slot)];
@@ -609,6 +634,7 @@ bool slot_read(Torrent* t, int slot, int64_t off, uint8_t* buf, int n) {
 
 // A free slot, or the one whose piece is least likely to be read again:
 // not ahead of a reader, and used longest ago.
+static void cache_set_slot(Torrent* t, int slot, int piece);  // defined below; keeps the on-disk slot map accurate
 int take_slot(Torrent* t, double now) {
 	if (t->slots_used < t->nslots) return t->slots_used++;
 	int64_t ahead = readahead_bytes(t);
@@ -629,6 +655,7 @@ int take_slot(Torrent* t, double now) {
 	}
 	int old = t->piece_in_slot[size_t(best)];
 	if (old >= 0) t->have[size_t(old)] = 0, t->slot_of[size_t(old)] = -1;
+	cache_set_slot(t, best, -1);  // evicted: forget the on-disk entry
 	(void)now;
 	return best;
 }
@@ -644,6 +671,181 @@ void store_piece(Torrent* t, int piece, const std::string& data, double now) {
 	t->slot_touch[size_t(slot)] = now;
 	t->have[size_t(piece)] = 1;
 	t->ever[size_t(piece)] = 1;
+	t->last_piece_at = now;
+	cache_set_slot(t, slot, piece);
+}
+
+// ---------------------------------------------------------------------------
+// Persistent piece cache.
+//
+// The cache file starts with a fixed header identifying the exact torrent it
+// belongs to, then the per-slot piece indexes, then the slot data:
+//
+//   offset 0:  magic[8] = "STRCACH\x01"
+//   offset 8:  info-hash[20]
+//   offset 28: npieces (int64, little-endian)
+//   offset 36: piece length (int64, little-endian)
+//   offset 44: nslots (int32, little-endian)
+//   offset 48: slot_piece[nslots] (int32 each, -1 = empty)
+//   offset 48 + 4*nslots: slot data, nslots * plen bytes
+//
+// On open, anything that doesn't exactly match this torrent (magic, hash,
+// piece count/length, slot count) is discarded and the file is truncated.
+// Every restored piece is SHA-1 verified against the torrent's piece hashes
+// before being trusted, so stale or corrupt bytes can only ever cost a
+// re-download, never bad data.
+
+const char kCacheMagic[8] = {'S', 'T', 'R', 'C', 'A', 'C', 'H', '\x01'};
+
+// (re)write the identifying header at the start of the file.
+static void cache_write_header(FILE* f, const Torrent* t, int nslots) {
+	int64_t np = t->npieces, pl = t->plen;
+	int32_t ns = int32_t(nslots);
+	fseeko(f, 0, SEEK_SET);
+	fwrite(kCacheMagic, 1, 8, f);
+	fwrite(t->ih, 1, 20, f);
+	fwrite(&np, 8, 1, f);
+	fwrite(&pl, 8, 1, f);
+	fwrite(&ns, 4, 1, f);
+}
+
+// Record which piece lives in a slot, kept accurate as pieces are stored and
+// evicted so a later session can reuse them. A stale entry is harmless:
+// restored pieces are hash-verified on load.
+static void cache_set_slot(Torrent* t, int slot, int piece) {
+	if (!t->cache || slot < 0 || slot >= t->nslots) return;
+	int32_t p = int32_t(piece);
+	if (fseeko(t->cache, kCacheHeaderLen + int64_t(4) * slot, SEEK_SET) != 0 ||
+	    fwrite(&p, 4, 1, t->cache) != 1) {
+		// Disk trouble; the piece write itself would have failed too and the
+		// existing fallback handles that. A stale map entry only fails the
+		// next session's hash check (cost: a re-download, never bad data),
+		// so no fflush here: this runs on the network thread per piece.
+	}
+}
+
+// Open the piece cache without truncating, reusing pieces from a previous
+// session when they provably belong to this torrent. Falls back to the old
+// in-memory behavior when the file can't be used.
+static void setup_cache(Torrent* t) {
+	Impl& I = impl();
+	int64_t slots = std::max<int64_t>(8, std::min<int64_t>(int64_t(t->npieces), I.cache_bytes / t->plen));
+	int nslots = int(slots);
+	t->nslots = nslots;
+	t->have.assign(size_t(t->npieces), 0);
+	t->ever.assign(size_t(t->npieces), 0);
+	t->slot_of.assign(size_t(t->npieces), -1);
+	t->piece_in_slot.assign(size_t(nslots), -1);
+	t->slot_touch.assign(size_t(nslots), 0);
+	t->slots_used = 0;
+	t->cache = nullptr;
+
+	// One cache file per torrent. (Older builds shared a single
+	// torrent-cache.bin that was truncated on every open, so its contents
+	// were never reusable; remove the leftover once.)
+	std::string path = I.data_dir + "/torrent-cache-" + t->hex + ".bin";
+	remove((I.data_dir + "/torrent-cache.bin").c_str());
+
+	// Only the current torrent keeps a cache file: prune every other
+	// torrent-cache-*.bin so dead torrents can't accumulate past ~6GB total
+	// inside the 16GB sandbox. (Unlinking a file another stopped torrent
+	// still has open is safe: its FILE* keeps the inode until fclose.)
+	if (DIR* dir = opendir(I.data_dir.c_str())) {
+		const std::string mine = "torrent-cache-" + t->hex + ".bin";
+		while (dirent* e = readdir(dir)) {
+			std::string name = e->d_name;
+			if (name.compare(0, 14, "torrent-cache-") == 0 && name.size() > 18 &&
+			    name.compare(name.size() - 4, 4, ".bin") == 0 && name != mine)
+				remove((I.data_dir + "/" + name).c_str());
+		}
+		closedir(dir);
+	}
+
+	FILE* f = fopen(path.c_str(), "r+b");
+	if (!f) f = fopen(path.c_str(), "w+b");
+	if (!f) {
+		dlog("torrent: can't create %s (errno %d); keeping pieces in memory", path.c_str(), errno);
+		t->nslots = int(std::max<int64_t>(8, std::min<int64_t>(int64_t(nslots), kMaxRamCache / t->plen)));
+		t->ram.assign(size_t(t->nslots), std::string());
+		return;
+	}
+
+	// Validate the header: only reuse bytes that belong to this exact torrent.
+	bool ok = false;
+	std::vector<int32_t> slot_piece;
+	do {
+		char magic[8];
+		uint8_t ih[20];
+		int64_t np = 0, pl = 0;
+		int32_t ns = 0;
+		if (fseeko(f, 0, SEEK_SET) != 0) break;
+		if (fread(magic, 1, 8, f) != 8 || memcmp(magic, kCacheMagic, 8) != 0) break;
+		if (fread(ih, 1, 20, f) != 20 || memcmp(ih, t->ih, 20) != 0) break;
+		if (fread(&np, 8, 1, f) != 1 || np != t->npieces) break;
+		if (fread(&pl, 8, 1, f) != 1 || pl != t->plen) break;
+		if (fread(&ns, 4, 1, f) != 1 || ns != nslots || ns <= 0) break;
+		slot_piece.assign(size_t(ns), -1);
+		if (fread(slot_piece.data(), 4, size_t(ns), f) != size_t(ns)) break;
+		ok = true;
+		for (int32_t p : slot_piece)
+			if (p < -1 || p >= t->npieces) {
+				ok = false;
+				break;
+			}
+	} while (0);
+	if (!ok) {
+		// New file, a different torrent's file, or a corrupt header:
+		// truncate and start empty. (Safe default; never trust stale bytes.)
+		f = freopen(path.c_str(), "w+b", f);
+		if (!f) {
+			dlog("torrent: can't truncate %s (errno %d); keeping pieces in memory", path.c_str(), errno);
+			t->nslots = int(std::max<int64_t>(8, std::min<int64_t>(int64_t(nslots), kMaxRamCache / t->plen)));
+			t->ram.assign(size_t(t->nslots), std::string());
+			return;
+		}
+		cache_write_header(f, t, nslots);
+		std::vector<int32_t> empty(size_t(nslots), -1);
+		if (fwrite(empty.data(), 4, size_t(nslots), f) != size_t(nslots) || fflush(f) != 0) {
+			dlog("torrent: can't write %s (errno %d); keeping pieces in memory", path.c_str(), errno);
+			fclose(f);
+			t->nslots = int(std::max<int64_t>(8, std::min<int64_t>(int64_t(nslots), kMaxRamCache / t->plen)));
+			t->ram.assign(size_t(t->nslots), std::string());
+			return;
+		}
+		t->cache = f;
+		return;
+	}
+
+	// Restore: trust nothing until the bytes hash to the expected piece.
+	t->cache = f;
+	int64_t data_off = cache_data_off(nslots);
+	std::vector<uint8_t> buf(size_t(t->plen));
+	int restored = 0;
+	for (int s = 0; s < nslots; s++) {
+		int p = slot_piece[size_t(s)];
+		if (p < 0) continue;
+		int64_t psz = t->piece_size(p);
+		if (fseeko(f, data_off + int64_t(s) * t->plen, SEEK_SET) != 0 ||
+		    fread(buf.data(), 1, size_t(psz), f) != size_t(psz)) {
+			cache_set_slot(t, s, -1);
+			continue;
+		}
+		uint8_t digest[20];
+		SHA1(buf.data(), size_t(psz), digest);
+		if (memcmp(digest, t->hashes.data() + size_t(p) * 20, 20) != 0) {
+			cache_set_slot(t, s, -1);  // stale bytes: forget the entry
+			continue;
+		}
+		t->piece_in_slot[size_t(s)] = p;
+		t->slot_of[size_t(p)] = s;
+		t->slot_touch[size_t(s)] = 0;  // oldest data: evicted first
+		t->have[size_t(p)] = 1;
+		t->ever[size_t(p)] = 1;
+		if (s + 1 > t->slots_used) t->slots_used = s + 1;
+		restored++;
+	}
+	if (restored > 0)
+		dlog("torrent %s: reused %d cached pieces from the previous session", t->hex.c_str(), restored);
 }
 
 // ---------------------------------------------------------------------------
@@ -692,23 +894,11 @@ bool parse_info(Torrent* t, const std::string& raw) {
 	t->npieces = int(np);
 	t->hashes = hashes;
 	t->files = files;
-	t->have.assign(size_t(np), 0);
-	t->ever.assign(size_t(np), 0);
-	t->slot_of.assign(size_t(np), -1);
 
-	// The cache: as many slots as fit in the cache size (at least 8).
-	Impl& I = impl();
-	int64_t slots = std::max<int64_t>(8, std::min<int64_t>(np, I.cache_bytes / plen));
-	t->nslots = int(slots);
-	std::string path = I.data_dir + "/torrent-cache.bin";
-	t->cache = fopen(path.c_str(), "w+b");
-	if (!t->cache) {
-		dlog("torrent: can't create %s (errno %d); keeping pieces in memory", path.c_str(), errno);
-		t->nslots = int(std::max<int64_t>(8, std::min<int64_t>(slots, kMaxRamCache / plen)));
-		t->ram.assign(size_t(t->nslots), std::string());
-	}
-	t->piece_in_slot.assign(size_t(t->nslots), -1);
-	t->slot_touch.assign(size_t(t->nslots), 0);
+	// The cache: as many slots as fit in the cache size (at least 8),
+	// persisted across sessions (restored pieces are SHA-1 verified).
+	setup_cache(t);
+
 	t->has_meta = true;
 	t->wanted_dirty = true;
 	dlog("torrent %s: \"%s\", %zu files, %lld bytes, %d pieces of %lld KB, cache %d pieces", t->hex.c_str(),
@@ -1518,6 +1708,12 @@ void net_loop() {
 			if ((*it)->stopped) {
 				for (auto& th : (*it)->tracker_threads)
 					if (th.joinable()) th.join();
+				// Drop this torrent's piece cache file: without this, every
+				// watched torrent would leave up to ~6GB in the 16GB sandbox
+				// forever. (The destructor would fclose the FILE* anyway;
+				// closing first keeps the remove unambiguous.)
+				if ((*it)->cache) { fclose((*it)->cache); (*it)->cache = nullptr; }
+				remove((I.data_dir + "/torrent-cache-" + (*it)->hex + ".bin").c_str());
 				dlog("torrent %s: stopped", (*it)->hex.c_str());
 				it = I.torrents.erase(it);
 			} else {
@@ -1687,10 +1883,13 @@ void map_port() {
 		return;
 	}
 	std::string ps = std::to_string(port);
+	// Lease duration in seconds. "0" would mean a PERMANENT mapping that
+	// outlives the app on the router if the process is killed, so use a
+	// one-hour lease instead; unmap_port() removes the mapping on clean exit.
 	int tcp = UPNP_AddPortMapping(urls.controlURL, data.first.servicetype, ps.c_str(), ps.c_str(), lan,
-	                              "Stremio PS5", "TCP", nullptr, "0");
+	                              "Stremio PS5", "TCP", nullptr, "3600");
 	int udp = UPNP_AddPortMapping(urls.controlURL, data.first.servicetype, ps.c_str(), ps.c_str(), lan,
-	                              "Stremio PS5", "UDP", nullptr, "0");
+	                              "Stremio PS5", "UDP", nullptr, "3600");
 	dlog("upnp: port %d forwarded to %s: TCP %s, UDP %s", port, lan, tcp == 0 ? "ok" : strupnperror(tcp),
 	     udp == 0 ? "ok" : strupnperror(udp));
 	if (tcp == 0) {
@@ -1790,7 +1989,89 @@ void Engine::configure(const std::string& data_dir, int64_t cache_bytes) {
 	impl().cache_bytes = cache_bytes;
 }
 
+// ---------------------------------------------------------------------------
+// Next-episode prefetch (Worker 9). One at a time; flag-driven, so
+// superseding/cancelling never blocks. The worker only touches Impl under
+// I.mu (never held across the join), so prefetch_cancel() can't deadlock.
+
+static std::mutex g_pre_m;
+static std::thread g_pre_thread;
+static std::atomic<bool> g_pre_cancel{false};
+
+void Engine::prefetch_cancel() {
+	g_pre_cancel.store(true);
+	std::thread th;
+	{
+		std::lock_guard<std::mutex> lock(g_pre_m);
+		th = std::move(g_pre_thread);
+	}
+	if (th.joinable()) th.join();
+	g_pre_cancel.store(false);
+}
+
+bool Engine::prefetch_file(const std::string& info_hash_hex, const std::vector<std::string>& trackers, int season,
+                           int episode, int64_t bytes) {
+	if (bytes <= 0) return false;
+	prefetch_cancel();  // one at a time; joins any in-flight prefetch (I.mu not held here)
+	std::string hex = lower(info_hash_hex);
+	{
+		// Never steal the engine from the episode being watched.
+		std::lock_guard<std::mutex> lock(impl().mu);
+		for (auto& t : impl().torrents) {
+			if (t->stopped || t->hex == hex) continue;
+			if (!t->readers.empty()) {
+				dlog("torrent: prefetch of %s refused, %s is being watched", hex.c_str(), t->hex.c_str());
+				return false;
+			}
+		}
+	}
+	std::thread th([hex, trackers, season, episode, bytes] {
+		Engine& eng = Engine::get();
+		eng.start(hex, trackers);
+		std::vector<FileInfo> files;
+		std::string err;
+		// Background budget: 2 minutes for metadata; the foreground Play
+		// path re-waits if it must.
+		if (!eng.wait_metadata(hex, files, &g_pre_cancel, 120, &err)) {
+			dlog("torrent: prefetch of %s: no metadata (%s)", hex.c_str(), err.c_str());
+			return;
+		}
+		int idx = Engine::guess_file(files, season, episode);
+		if (idx < 0) {
+			dlog("torrent: prefetch of %s: no video file", hex.c_str());
+			return;
+		}
+		eng.select_file(hex, idx);
+		int reader_id = -1;
+		int64_t file_size = 0;
+		std::string oerr;
+		auto t = eng.open_reader(hex, idx, &reader_id, &file_size, &oerr);
+		if (!t) {
+			dlog("torrent: prefetch of %s: %s", hex.c_str(), oerr.c_str());
+			return;
+		}
+		// Pull the head through the piece cache; the real playback's reader
+		// then hits cached pieces instead of the swarm.
+		std::vector<uint8_t> buf(1 << 20);
+		int64_t got = 0, want = std::min(bytes, file_size);
+		while (got < want && !g_pre_cancel.load()) {
+			int k = eng.read(t, reader_id, idx, got, buf.data(), int(std::min<int64_t>(buf.size(), want - got)),
+			                 &g_pre_cancel);
+			if (k <= 0) break;  // end of file, cancel, stop, or the 30 s piece watchdog
+		}
+		eng.close_reader(t, reader_id);
+		dlog("torrent: prefetched %lld/%lld bytes of %s file %d", (long long)got, (long long)want, hex.c_str(),
+		     idx);
+	});
+	{
+		std::lock_guard<std::mutex> lock(g_pre_m);
+		g_pre_thread = std::move(th);
+	}
+	return true;
+}
+
 void Engine::shutdown() {
+	prefetch_cancel();  // before I.mu: the worker may be inside read()/wait_metadata()
 	Impl& I = impl();
 	{
 		std::lock_guard<std::mutex> lock(I.mu);
@@ -1955,9 +2236,16 @@ int Engine::read(const std::shared_ptr<Torrent>& t, int reader_id, int file_idx,
 		r->second = abs;
 	}
 	int piece = int(abs / t->plen);
+	// Stall watchdog: if a piece takes longer than 30 s to arrive, the
+	// swarm is dead for us — fail instead of buffering forever.
+	const double wait_start = now_seconds();
 	while (!t->have[size_t(piece)]) {
 		if (t->stopped) return -2;
 		if (abort && abort->load()) return -1;
+		if (now_seconds() - wait_start > 30.0) {
+			dlog("torrent %s: stall waiting for piece %d (30 s), failing", t->hex.c_str(), piece);
+			return -3;
+		}
 		I.cv.wait_for(lock, std::chrono::milliseconds(100));
 	}
 	int64_t in_piece = abs - int64_t(piece) * t->plen;

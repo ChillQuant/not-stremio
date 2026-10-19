@@ -16,12 +16,12 @@ struct GridLayout
 {
     float x = theme::kLeft;      // left edge of the first column
     float y = 220.0f;            // top of the first row's posters
-    float card_w = 232.0f;
-    float card_h = 348.0f;
-    float pitch_x = 262.0f;
-    float pitch_y = 430.0f;      // a row: poster, then its name
+    float card_w = 268.0f;
+    float card_h = 400.0f;
+    float pitch_x = 304.0f;
+    float pitch_y = 516.0f;
     int cols = 6;
-    float view_top = 190.0f;     // posters are clipped above this line
+    float view_top = 188.0f;     // posters are clipped above this line
     float view_bottom = 1080.0f;
 };
 
@@ -39,13 +39,23 @@ class PosterGrid
     // The items changed in place (more were added): keeps the cursor where it is.
     void sync();
     void snap();
+    // Restore a saved grid position (nav_memory): clamps to the loaded items.
+    void set_index(int idx);
     Edge move(hui::Direction direction);
     void update(float dt, bool has_focus);
-    void draw(hui::gfx::DrawList &list, const Env &env, float age, bool show_progress, bool has_focus) const;
+    void draw(hui::gfx::DrawList &bg, hui::gfx::DrawList &fg, const Env &env, float age, bool show_progress,
+              bool has_focus) const;
+    // Loading placeholders: shimmering card shapes in the grid's layout, for
+    // when the items are still arriving. Subtle, dark-theme, never a spinner.
+    void draw_skeletons(hui::gfx::DrawList &bg, const Env &env, float clock) const;
 
     int index() const
     {
         return index_;
+    }
+    int cols() const
+    {
+        return layout_.cols;
     }
     const Title *focused() const;
 

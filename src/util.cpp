@@ -3,6 +3,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <cerrno>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -15,11 +16,24 @@ extern "C" int sceKernelDebugOutText(int channel, const char* text);
 
 static FILE* g_log = nullptr;
 static std::mutex g_log_mutex;
+// Diagnostic log recording: when active, dlog() also writes to g_record.
+static FILE* g_record = nullptr;
+static std::string g_record_path;
 
 void log_open(const std::string& path) {
 	std::lock_guard<std::mutex> lock(g_log_mutex);
 	if (g_log) fclose(g_log);
-	g_log = fopen(path.c_str(), "w");
+	// Never silently delete a previous run's log: if it grew large, rotate it
+	// aside once; otherwise keep appending to it.
+	struct stat st;
+	if (stat(path.c_str(), &st) == 0 && (uint64_t)st.st_size > 2u * 1024 * 1024) {
+		std::string prev = path;
+		if (ends_with(prev, ".txt")) prev = prev.substr(0, prev.size() - 4) + ".prev.txt";
+		else prev += ".prev";
+		remove(prev.c_str());
+		rename(path.c_str(), prev.c_str());
+	}
+	g_log = fopen(path.c_str(), "a");
 }
 
 void dlog(const char* fmt, ...) {
@@ -28,20 +42,104 @@ void dlog(const char* fmt, ...) {
 	va_start(ap, fmt);
 	vsnprintf(buf, sizeof(buf), fmt, ap);
 	va_end(ap);
+	// Every line carries a local timestamp so crashes and stalls can be
+	// correlated with playback and network events.
+	char ts[16];
+	time_t t = time(nullptr);
+	struct tm tm;
+	localtime_r(&t, &tm);
+	snprintf(ts, sizeof(ts), "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
 	std::lock_guard<std::mutex> lock(g_log_mutex);
 #ifdef PLATFORM_PS5
 	// The kernel log (klogsrv, port 3232).
 	char line[2100];
-	snprintf(line, sizeof(line), "[stremio] %s\n", buf);
+	snprintf(line, sizeof(line), "%s [stremio] %s\n", ts, buf);
 	sceKernelDebugOutText(0, line);
 #else
-	printf("[stremio] %s\n", buf);
+	printf("%s [stremio] %s\n", ts, buf);
 	fflush(stdout);
 #endif
 	if (g_log) {
-		fprintf(g_log, "%s\n", buf);
+		fprintf(g_log, "%s [stremio] %s\n", ts, buf);
 		fflush(g_log);
 	}
+	if (g_record) {
+		fprintf(g_record, "%s [stremio] %s\n", ts, buf);
+		fflush(g_record);
+	}
+}
+
+// Start recording diagnostics. Tries /data/stremio first (visible in
+// PS5Upload); falls back to <dir>/ (the app's /download0/stremio) if the
+// sandbox blocks /data. Returns the path that actually worked, or empty.
+std::string log_record_start(const std::string& dir) {
+	std::lock_guard<std::mutex> lock(g_log_mutex);
+	if (g_record)
+		return g_record_path;
+	time_t t = time(nullptr);
+	struct tm tm;
+	localtime_r(&t, &tm);
+	char name[64];
+	snprintf(name, sizeof(name), "log-record-%04d%02d%02d-%02d%02d%02d.txt",
+	         tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+	         tm.tm_hour, tm.tm_min, tm.tm_sec);
+	// Try /data/stremio first (browsable in PS5Upload).
+	const std::string datapath = std::string("/data/stremio/") + name;
+	mkdir("/data/stremio", 0755);
+	g_record = fopen(datapath.c_str(), "w");
+	if (g_record) {
+		g_record_path = datapath;
+		return g_record_path;
+	}
+	// Fallback: app's own data dir (/download0/stremio).
+	g_record_path = dir + "/" + name;
+	g_record = fopen(g_record_path.c_str(), "w");
+	if (!g_record) {
+		g_record_path.clear();
+		return "";
+	}
+	return g_record_path;
+}
+
+// Stop recording. Returns the path of the finished recording, or empty if
+// nothing was recording.
+std::string log_record_stop() {
+	std::lock_guard<std::mutex> lock(g_log_mutex);
+	if (!g_record)
+		return "";
+	fclose(g_record);
+	g_record = nullptr;
+	std::string path = g_record_path;
+	g_record_path.clear();
+	return path;
+}
+
+bool log_record_active() {
+	std::lock_guard<std::mutex> lock(g_log_mutex);
+	return g_record != nullptr;
+}
+
+// Redacts a URL for logs: keeps scheme and host, drops path, query and any
+// embedded credentials. Never log full stream or manifest URLs.
+std::string log_url(const std::string& url) {
+	size_t scheme = url.find("://");
+	if (scheme == std::string::npos) {
+		// No scheme://host structure. magnet: links carry a public info-hash
+		// (needed for log correlation), not credentials — keep those whole.
+		if (url.compare(0, 7, "magnet:") == 0) return url;
+		return url.size() > 32 ? url.substr(0, 32) + "..." : url;
+	}
+	size_t host_start = scheme + 3;
+	size_t host_end = url.find('/', host_start);
+	// Drop userinfo (user:pass@) — credentials.
+	size_t at = url.find('@', host_start);
+	if (at != std::string::npos && (host_end == std::string::npos || at < host_end))
+		host_start = at + 1;
+	std::string out = url.substr(0, scheme + 3) +
+	                  url.substr(host_start, host_end == std::string::npos ? std::string::npos
+	                                                                       : host_end - host_start);
+	if (host_end != std::string::npos) out += "/...";
+	return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -286,6 +384,186 @@ std::string cp874_to_utf8(const std::string& s) {
 	return out;
 }
 
+// Windows-1250 (Central European), 0x80-0xFF: generated from Python's cp1250 codec.
+static const uint16_t kCp1250High[128] = {
+	0x20AC, 0xFFFD, 0x201A, 0xFFFD, 0x201E, 0x2026, 0x2020, 0x2021,
+	0xFFFD, 0x2030, 0x0160, 0x2039, 0x015A, 0x0164, 0x017D, 0x0179,
+	0xFFFD, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+	0xFFFD, 0x2122, 0x0161, 0x203A, 0x015B, 0x0165, 0x017E, 0x017A,
+	0x00A0, 0x02C7, 0x02D8, 0x0141, 0x00A4, 0x0104, 0x00A6, 0x00A7,
+	0x00A8, 0x00A9, 0x015E, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x017B,
+	0x00B0, 0x00B1, 0x02DB, 0x0142, 0x00B4, 0x00B5, 0x00B6, 0x00B7,
+	0x00B8, 0x0105, 0x015F, 0x00BB, 0x013D, 0x02DD, 0x013E, 0x017C,
+	0x0154, 0x00C1, 0x00C2, 0x0102, 0x00C4, 0x0139, 0x0106, 0x00C7,
+	0x010C, 0x00C9, 0x0118, 0x00CB, 0x011A, 0x00CD, 0x00CE, 0x010E,
+	0x0110, 0x0143, 0x0147, 0x00D3, 0x00D4, 0x0150, 0x00D6, 0x00D7,
+	0x0158, 0x016E, 0x00DA, 0x0170, 0x00DC, 0x00DD, 0x0162, 0x00DF,
+	0x0155, 0x00E1, 0x00E2, 0x0103, 0x00E4, 0x013A, 0x0107, 0x00E7,
+	0x010D, 0x00E9, 0x0119, 0x00EB, 0x011B, 0x00ED, 0x00EE, 0x010F,
+	0x0111, 0x0144, 0x0148, 0x00F3, 0x00F4, 0x0151, 0x00F6, 0x00F7,
+	0x0159, 0x016F, 0x00FA, 0x0171, 0x00FC, 0x00FD, 0x0163, 0x02D9,
+};
+
+// Windows-1251 (Cyrillic), 0x80-0xFF: generated from Python's cp1251 codec.
+static const uint16_t kCp1251High[128] = {
+	0x0402, 0x0403, 0x201A, 0x0453, 0x201E, 0x2026, 0x2020, 0x2021,
+	0x20AC, 0x2030, 0x0409, 0x2039, 0x040A, 0x040C, 0x040B, 0x040F,
+	0x0452, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+	0xFFFD, 0x2122, 0x0459, 0x203A, 0x045A, 0x045C, 0x045B, 0x045F,
+	0x00A0, 0x040E, 0x045E, 0x0408, 0x00A4, 0x0490, 0x00A6, 0x00A7,
+	0x0401, 0x00A9, 0x0404, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x0407,
+	0x00B0, 0x00B1, 0x0406, 0x0456, 0x0491, 0x00B5, 0x00B6, 0x00B7,
+	0x0451, 0x2116, 0x0454, 0x00BB, 0x0458, 0x0405, 0x0455, 0x0457,
+	0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417,
+	0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, 0x041F,
+	0x0420, 0x0421, 0x0422, 0x0423, 0x0424, 0x0425, 0x0426, 0x0427,
+	0x0428, 0x0429, 0x042A, 0x042B, 0x042C, 0x042D, 0x042E, 0x042F,
+	0x0430, 0x0431, 0x0432, 0x0433, 0x0434, 0x0435, 0x0436, 0x0437,
+	0x0438, 0x0439, 0x043A, 0x043B, 0x043C, 0x043D, 0x043E, 0x043F,
+	0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447,
+	0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x044F,
+};
+
+// Windows-1254 (Turkish), 0x80-0xFF: generated from Python's cp1254 codec.
+static const uint16_t kCp1254High[128] = {
+	0x20AC, 0xFFFD, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+	0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0xFFFD, 0xFFFD, 0xFFFD,
+	0xFFFD, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+	0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0xFFFD, 0xFFFD, 0x0178,
+	0x00A0, 0x00A1, 0x00A2, 0x00A3, 0x00A4, 0x00A5, 0x00A6, 0x00A7,
+	0x00A8, 0x00A9, 0x00AA, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00AF,
+	0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x00B4, 0x00B5, 0x00B6, 0x00B7,
+	0x00B8, 0x00B9, 0x00BA, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00BF,
+	0x00C0, 0x00C1, 0x00C2, 0x00C3, 0x00C4, 0x00C5, 0x00C6, 0x00C7,
+	0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x00CC, 0x00CD, 0x00CE, 0x00CF,
+	0x011E, 0x00D1, 0x00D2, 0x00D3, 0x00D4, 0x00D5, 0x00D6, 0x00D7,
+	0x00D8, 0x00D9, 0x00DA, 0x00DB, 0x00DC, 0x0130, 0x015E, 0x00DF,
+	0x00E0, 0x00E1, 0x00E2, 0x00E3, 0x00E4, 0x00E5, 0x00E6, 0x00E7,
+	0x00E8, 0x00E9, 0x00EA, 0x00EB, 0x00EC, 0x00ED, 0x00EE, 0x00EF,
+	0x011F, 0x00F1, 0x00F2, 0x00F3, 0x00F4, 0x00F5, 0x00F6, 0x00F7,
+	0x00F8, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x0131, 0x015F, 0x00FF,
+};
+
+// Windows-1255 (Hebrew), 0x80-0xFF: generated from Python's cp1255 codec.
+static const uint16_t kCp1255High[128] = {
+	0x20AC, 0xFFFD, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+	0x02C6, 0x2030, 0xFFFD, 0x2039, 0xFFFD, 0xFFFD, 0xFFFD, 0xFFFD,
+	0xFFFD, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+	0x02DC, 0x2122, 0xFFFD, 0x203A, 0xFFFD, 0xFFFD, 0xFFFD, 0xFFFD,
+	0x00A0, 0x00A1, 0x00A2, 0x00A3, 0x20AA, 0x00A5, 0x00A6, 0x00A7,
+	0x00A8, 0x00A9, 0x00D7, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00AF,
+	0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x00B4, 0x00B5, 0x00B6, 0x00B7,
+	0x00B8, 0x00B9, 0x00F7, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00BF,
+	0x05B0, 0x05B1, 0x05B2, 0x05B3, 0x05B4, 0x05B5, 0x05B6, 0x05B7,
+	0x05B8, 0x05B9, 0xFFFD, 0x05BB, 0x05BC, 0x05BD, 0x05BE, 0x05BF,
+	0x05C0, 0x05C1, 0x05C2, 0x05C3, 0x05F0, 0x05F1, 0x05F2, 0x05F3,
+	0x05F4, 0xFFFD, 0xFFFD, 0xFFFD, 0xFFFD, 0xFFFD, 0xFFFD, 0xFFFD,
+	0x05D0, 0x05D1, 0x05D2, 0x05D3, 0x05D4, 0x05D5, 0x05D6, 0x05D7,
+	0x05D8, 0x05D9, 0x05DA, 0x05DB, 0x05DC, 0x05DD, 0x05DE, 0x05DF,
+	0x05E0, 0x05E1, 0x05E2, 0x05E3, 0x05E4, 0x05E5, 0x05E6, 0x05E7,
+	0x05E8, 0x05E9, 0x05EA, 0xFFFD, 0xFFFD, 0x200E, 0x200F, 0xFFFD,
+};
+
+// Windows-1257 (Baltic), 0x80-0xFF: generated from Python's cp1257 codec.
+static const uint16_t kCp1257High[128] = {
+	0x20AC, 0xFFFD, 0x201A, 0xFFFD, 0x201E, 0x2026, 0x2020, 0x2021,
+	0xFFFD, 0x2030, 0xFFFD, 0x2039, 0xFFFD, 0x00A8, 0x02C7, 0x00B8,
+	0xFFFD, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+	0xFFFD, 0x2122, 0xFFFD, 0x203A, 0xFFFD, 0x00AF, 0x02DB, 0xFFFD,
+	0x00A0, 0xFFFD, 0x00A2, 0x00A3, 0x00A4, 0xFFFD, 0x00A6, 0x00A7,
+	0x00D8, 0x00A9, 0x0156, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00C6,
+	0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x00B4, 0x00B5, 0x00B6, 0x00B7,
+	0x00F8, 0x00B9, 0x0157, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00E6,
+	0x0104, 0x012E, 0x0100, 0x0106, 0x00C4, 0x00C5, 0x0118, 0x0112,
+	0x010C, 0x00C9, 0x0179, 0x0116, 0x0122, 0x0136, 0x012A, 0x013B,
+	0x0160, 0x0143, 0x0145, 0x00D3, 0x014C, 0x00D5, 0x00D6, 0x00D7,
+	0x0172, 0x0141, 0x015A, 0x016A, 0x00DC, 0x017B, 0x017D, 0x00DF,
+	0x0105, 0x012F, 0x0101, 0x0107, 0x00E4, 0x00E5, 0x0119, 0x0113,
+	0x010D, 0x00E9, 0x017A, 0x0117, 0x0123, 0x0137, 0x012B, 0x013C,
+	0x0161, 0x0144, 0x0146, 0x00F3, 0x014D, 0x00F5, 0x00F6, 0x00F7,
+	0x0173, 0x0142, 0x015B, 0x016B, 0x00FC, 0x017C, 0x017E, 0x02D9,
+};
+
+// Windows-1258 (Vietnamese), 0x80-0xFF: generated from Python's cp1258 codec.
+static const uint16_t kCp1258High[128] = {
+	0x20AC, 0xFFFD, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+	0x02C6, 0x2030, 0xFFFD, 0x2039, 0x0152, 0xFFFD, 0xFFFD, 0xFFFD,
+	0xFFFD, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+	0x02DC, 0x2122, 0xFFFD, 0x203A, 0x0153, 0xFFFD, 0xFFFD, 0x0178,
+	0x00A0, 0x00A1, 0x00A2, 0x00A3, 0x00A4, 0x00A5, 0x00A6, 0x00A7,
+	0x00A8, 0x00A9, 0x00AA, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00AF,
+	0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x00B4, 0x00B5, 0x00B6, 0x00B7,
+	0x00B8, 0x00B9, 0x00BA, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00BF,
+	0x00C0, 0x00C1, 0x00C2, 0x0102, 0x00C4, 0x00C5, 0x00C6, 0x00C7,
+	0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x0300, 0x00CD, 0x00CE, 0x00CF,
+	0x0110, 0x00D1, 0x0309, 0x00D3, 0x00D4, 0x01A0, 0x00D6, 0x00D7,
+	0x00D8, 0x00D9, 0x00DA, 0x00DB, 0x00DC, 0x01AF, 0x0303, 0x00DF,
+	0x00E0, 0x00E1, 0x00E2, 0x0103, 0x00E4, 0x00E5, 0x00E6, 0x00E7,
+	0x00E8, 0x00E9, 0x00EA, 0x00EB, 0x0301, 0x00ED, 0x00EE, 0x00EF,
+	0x0111, 0x00F1, 0x0323, 0x00F3, 0x00F4, 0x01A1, 0x00F6, 0x00F7,
+	0x00F8, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x01B0, 0x20AB, 0x00FF,
+};
+
+static std::string cp1250_to_utf8(const std::string& s) {
+	std::string out;
+	out.reserve(s.size() * 2);
+	for (unsigned char c : s) {
+		if (c < 0x80) out += char(c);
+		else put_utf8(out, kCp1250High[c - 0x80]);
+	}
+	return out;
+}
+
+static std::string cp1251_to_utf8(const std::string& s) {
+	std::string out;
+	out.reserve(s.size() * 2);
+	for (unsigned char c : s) {
+		if (c < 0x80) out += char(c);
+		else put_utf8(out, kCp1251High[c - 0x80]);
+	}
+	return out;
+}
+
+static std::string cp1254_to_utf8(const std::string& s) {
+	std::string out;
+	out.reserve(s.size() * 2);
+	for (unsigned char c : s) {
+		if (c < 0x80) out += char(c);
+		else put_utf8(out, kCp1254High[c - 0x80]);
+	}
+	return out;
+}
+
+static std::string cp1255_to_utf8(const std::string& s) {
+	std::string out;
+	out.reserve(s.size() * 2);
+	for (unsigned char c : s) {
+		if (c < 0x80) out += char(c);
+		else put_utf8(out, kCp1255High[c - 0x80]);
+	}
+	return out;
+}
+
+static std::string cp1257_to_utf8(const std::string& s) {
+	std::string out;
+	out.reserve(s.size() * 2);
+	for (unsigned char c : s) {
+		if (c < 0x80) out += char(c);
+		else put_utf8(out, kCp1257High[c - 0x80]);
+	}
+	return out;
+}
+
+static std::string cp1258_to_utf8(const std::string& s) {
+	std::string out;
+	out.reserve(s.size() * 2);
+	for (unsigned char c : s) {
+		if (c < 0x80) out += char(c);
+		else put_utf8(out, kCp1258High[c - 0x80]);
+	}
+	return out;
+}
+
 std::string to_utf8(const std::string& in, const std::string& lang_hint) {
 	std::string s = in;
 	// Strip a UTF-8 byte order mark.
@@ -310,6 +588,22 @@ std::string to_utf8(const std::string& in, const std::string& lang_hint) {
 	if (l == "ara" || l == "ar" || l == "arabic" || l == "per" || l == "fas" || l == "fa" || l == "urd" || l == "ur")
 		return cp1256_to_utf8(s);
 	if (l == "tha" || l == "th" || l == "thai") return cp874_to_utf8(s);
+	if (l == "heb" || l == "he" || l == "hebrew") return cp1255_to_utf8(s);
+	if (l == "tur" || l == "tr" || l == "turkish" || l == "aze" || l == "az") return cp1254_to_utf8(s);
+	if (l == "rus" || l == "ru" || l == "ukr" || l == "uk" || l == "bel" || l == "be" ||
+	    l == "bul" || l == "bg" || l == "sr" || l == "srp" || l == "mkd" || l == "mk")
+		// Serbian is digraphic: "sr"/"srp" tags usually mean Cyrillic (the
+		// standard written form), but Latin-script Serbian subs exist and will
+		// mis-decode under cp1251. No safe byte-level script detection, so we
+		// pick the common case.
+		return cp1251_to_utf8(s);
+	if (l == "ces" || l == "cze" || l == "cz" || l == "pol" || l == "pl" || l == "slk" || l == "sk" ||
+	    l == "slv" || l == "sl" || l == "hun" || l == "hu" || l == "ron" || l == "ro" ||
+	    l == "hrv" || l == "hr" || l == "bos" || l == "bs")
+		return cp1250_to_utf8(s);
+	if (l == "lav" || l == "lv" || l == "lit" || l == "lt" || l == "est" || l == "et")
+		return cp1257_to_utf8(s);
+	if (l == "vie" || l == "vi") return cp1258_to_utf8(s);
 	// Guess Greek when the high bytes are mostly in the Greek letter range.
 	size_t high = 0, greek = 0, thai = 0;
 	for (unsigned char c : s) {
@@ -493,12 +787,17 @@ double jnum(const json& j, const char* key, double def) {
 	if (!j.is_object()) return def;
 	auto it = j.find(key);
 	if (it == j.end()) return def;
-	if (it->is_number()) return it->get<double>();
+	// NaN poisons downstream math (e.g. subtitle timing, shader uniforms):
+	// strtod("nan") succeeds, so guard explicitly.
+	if (it->is_number()) {
+		double v = it->get<double>();
+		return std::isfinite(v) ? v : def;
+	}
 	if (it->is_string()) {
 		const std::string& s = it->get_ref<const std::string&>();
 		char* end = nullptr;
 		double v = strtod(s.c_str(), &end);
-		if (end != s.c_str()) return v;
+		if (end != s.c_str() && std::isfinite(v)) return v;
 	}
 	return def;
 }

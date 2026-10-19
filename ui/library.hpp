@@ -25,12 +25,17 @@ class Library : public PageBase
     {
         return grid_.index();
     }
+    // Restore a saved grid position (nav_memory).
+    void set_cursor(int idx)
+    {
+        grid_.set_index(idx);
+    }
     int filter_cursor() const
     {
         return in_filters_ && !rail_.focused() ? filter_ : -1;
     }
     void update(const hui::InputFrame &input, float dt);
-    void draw(hui::gfx::DrawList &list, hui::gfx::BackdropSpec &backdrop) const;
+    void draw(hui::gfx::DrawList &bg, hui::gfx::DrawList &fg, hui::gfx::BackdropSpec &backdrop) const;
     const Title *focused_title() const
     {
         return in_filters_ || rail_.focused() ? nullptr : grid_.focused();

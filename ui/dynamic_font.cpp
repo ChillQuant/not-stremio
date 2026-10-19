@@ -7,8 +7,9 @@
 // create a distinct sx::thai_anchors type and break set_thai_anchors).
 #include "thai_anchors.hpp"
 
-#include "bidi.h"
+#include "../gl/a11y.hpp" // A11Y (worker 8): interface text scale, applied at font init
 #include "core/save_file.hpp"
+#include "../src/util.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -20,12 +21,19 @@ bool TtfChain::load(const std::string &font_dir, const std::vector<FaceSpec> &sp
 {
     faces_.clear();
     thai_face_ = -1;
+    missing_thai_.clear();
     for (const FaceSpec &spec : specs)
     {
         auto face = std::make_unique<Face>();
         if (!hui::save::read_file(font_dir + "/" + spec.file, &face->data))
         {
             std::fprintf(stderr, "font: cannot read %s\n", spec.file.c_str());
+            // Loud log: on PS5 stderr is invisible, so also dlog. A missing
+            // Thai face silently breaks Thai subtitles (renders as '?').
+            dlog("font: MISSING %s/%s - Thai subtitles will show '?' if this is a Thai face",
+                 font_dir.c_str(), spec.file.c_str());
+            if (spec.file.find("Thai") != std::string::npos)
+                missing_thai_.push_back(spec.file);
             if (faces_.empty())
                 return false;
             continue;
@@ -34,6 +42,9 @@ bool TtfChain::load(const std::string &font_dir, const std::vector<FaceSpec> &sp
         if (!stbtt_InitFont(&face->info, bytes, stbtt_GetFontOffsetForIndex(bytes, 0)))
         {
             std::fprintf(stderr, "font: cannot parse %s\n", spec.file.c_str());
+            dlog("font: CORRUPT %s/%s - cannot parse", font_dir.c_str(), spec.file.c_str());
+            if (spec.file.find("Thai") != std::string::npos)
+                missing_thai_.push_back(spec.file);
             if (faces_.empty())
                 return false;
             continue;
@@ -128,16 +139,26 @@ bool TtfChain::glyph(std::uint32_t codepoint, hui::gfx::GlyphBitmap &out)
 namespace
 {
 
-std::string shape_text(std::string_view text)
-{
-    return bidi_visual(std::string(text));
-}
-
 // Draws the glyphs most text uses now, so the first screen doesn't stall.
-void prewarm(const hui::gfx::Font &font)
+void prewarm(const hui::gfx::Font &font, bool minimal, bool display_only = false)
 {
-    for (std::uint32_t c = 0x20; c <= 0x17f; ++c)
+    if (display_only)
+    {
+        // Display face (e.g. Montserrat): only the bare-minimum glyphs the
+        // boot mark + first-row titles need; digits/uppercase/lowercase cover
+        // Latin titles, the rest rasterizes on demand on the GL thread.
+        font.has_glyph(' ');
+        for (std::uint32_t c = '0'; c <= '9'; ++c) font.has_glyph(c);
+        for (std::uint32_t c = 'A'; c <= 'Z'; ++c) font.has_glyph(c);
+        for (std::uint32_t c = 'a'; c <= 'z'; ++c) font.has_glyph(c);
+        return;
+    }
+    // Minimal: ASCII only for boot. Full: everything (no longer used; kept
+    // for callers that may request it on the GL thread).
+    const std::uint32_t ascii_end = minimal ? 0x7e : 0x17f;
+    for (std::uint32_t c = 0x20; c <= ascii_end; ++c)
         font.has_glyph(c);
+    if (minimal) return;
     for (std::uint32_t c = 0x2010; c <= 0x2026; ++c)
         font.has_glyph(c);
     for (std::uint32_t c = 0x386; c <= 0x3ce; ++c)
@@ -155,9 +176,22 @@ bool make(hui::gfx::Renderer &renderer, hui::gfx::Font *font, TtfChain *chain, c
         return false;
     float ascent = 0, descent = 0, gap = 0;
     chain->metrics(&ascent, &descent, &gap);
-    font->init_dynamic(chain, chain->pixel_size(), chain->sdf_range(), ascent, descent, gap, 2048);
-    font->set_text_transform(&shape_text);
-    prewarm(*font);
+    // A11Y (worker 8): interface text scaling. The SDF atlas rasterizes each
+    // glyph once at pixel_size_ no matter what is passed here, so a smaller
+    // reference pixel size in the font header makes every measure()/layout()
+    // larger by the same factor — with zero extra atlas pressure (the cached
+    // glyphs are untouched and stay crisp; that is what SDF is for). Applied
+    // at font init, which runs before Session::init(), so A11y::get() lazily
+    // reads the persisted value itself; changing the setting takes effect
+    // after a restart.
+    const float a11y_text = std::clamp(A11y::get().ui_text_scale, 1.0f, 2.0f);
+    font->init_dynamic(chain, chain->pixel_size() / a11y_text, chain->sdf_range(), ascent, descent, gap, 2048);
+    // NOTE: no set_text_transform for bidi here. Subtitles are already
+    // reordered at parse time (bidi_visual_rml in src/subtitles.cpp); applying
+    // bidi again at draw time would reverse them (fribidi_log2vis is not
+    // idempotent).
+    prewarm(*font, true,
+            !faces.empty() && faces.front().file.find("Montserrat") != std::string::npos);
     ref->font = font;
     ref->texture = renderer.batch().create_font_texture(*font);
     int first = 0, last = 0;
@@ -235,6 +269,28 @@ bool load_ui_fonts(hui::gfx::Renderer &renderer, const std::string &font_dir, co
              &fonts->display);
     if (!ok)
         return false;
+    // Collect missing Thai fonts across all chains for a user-visible warning.
+    // Thai subtitles render as '?' without these; the user needs to know.
+    for (const TtfChain *chain : {&out->regular_chain, &out->semibold_chain, &out->display_chain})
+    {
+        for (const std::string &f : chain->missing_thai())
+        {
+            if (std::find(out->missing_thai_fonts.begin(), out->missing_thai_fonts.end(), f) ==
+                out->missing_thai_fonts.end())
+                out->missing_thai_fonts.push_back(f);
+        }
+    }
+    if (!out->missing_thai_fonts.empty())
+    {
+        std::string names;
+        for (const std::string &f : out->missing_thai_fonts)
+        {
+            if (!names.empty())
+                names += ", ";
+            names += f;
+        }
+        dlog("font: WARNING - missing Thai fonts (%s). Thai subtitles will show '?'", names.c_str());
+    }
     // MODIFIED for Stremio for PS5: Thai mark positioning. Attach the baked
     // GPOS/HarfBuzz tables and register the .small/.narrow variant glyphs
     // under private-use codepoints so layout() can find() them.

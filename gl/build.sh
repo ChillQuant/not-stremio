@@ -35,7 +35,7 @@ CC="$SDK/bin/prospero-clang"
 [ -x "$TOOL" ] || (cd "$BP" && bash tools/build-host-tools.sh)
 
 rm -rf "$B" && mkdir -p "$B/obj" "$B/stubs"
-FLAGS=(-std=c++20 -O2 -w -DGL_GLEXT_PROTOTYPES=1 -DHAVE_FRIBIDI -DHAVE_WEBP
+FLAGS=(-std=c++20 -O2 -Wall -DGL_GLEXT_PROTOTYPES=1 -DHAVE_FRIBIDI -DHAVE_WEBP
 	-DPLATFORM_PS5=1 -DPLATFORM_PS5_NATIVE=1 -DHAVE_DHT=1 -DHAVE_UPNP=1 -DMINIUPNP_STATICLIB
 	-I"$HUI/src" -I"$HUI/third_party/stb" -I"$ROOT/ui" -I"$ROOT/gl" -I"$ROOT/src" -I"$ROOT/third_party"
 	-I"$GL/include" -I"$SDK/target/user/homebrew/include")
@@ -44,7 +44,7 @@ echo ">> compiling"
 sources=("$ROOT"/ui/*.cpp "$ROOT"/gl/*.cpp
 	"$ROOT/src/bidi.cpp" "$ROOT/src/stremio.cpp" "$ROOT/src/http.cpp" "$ROOT/src/util.cpp" "$ROOT/src/tasks.cpp"
 	"$ROOT/src/player.cpp" "$ROOT/src/netstream.cpp" "$ROOT/src/hwdec_ps5.cpp" "$ROOT/src/yuv_convert.cpp"
-	"$ROOT/src/subtitles.cpp" "$ROOT/src/pcm_out.cpp" "$ROOT"/src/torrent/*.cpp
+	"$ROOT/src/subtitles.cpp" "$ROOT/src/pcm_out.cpp" "$ROOT/src/iec61937.cpp" "$ROOT/src/pt_out.cpp" "$ROOT/src/videoout_rate.cpp" "$ROOT/src/hdr_probe.cpp" "$ROOT/src/aniskip.cpp" "$ROOT/src/skipdb.cpp" "$ROOT"/src/torrent/*.cpp
 	"$HUI"/src/gfx/*.cpp "$HUI"/src/audio/{mixer,cues,wav}.cpp "$HUI/src/platform/ps5/audio_out.cpp" "$HUI/src/core/save_file.cpp" "$HUI/src/core/input.cpp" "$HUI/src/ui/glyphs.cpp"
 	"$HUI/src/platform/ps5/display_egl.cpp" "$HUI/src/platform/ps5/system.cpp" "$HUI/src/platform/ps5/pad.cpp")
 objs=()
@@ -59,7 +59,7 @@ for o in "${objs[@]}"; do [ -f "$o" ] || { echo "compile failed ($o)"; exit 1; }
 
 "$CXX" -std=c++20 -O2 -fno-exceptions -fno-rtti -c "$BP/tooling/native/app_crt.cpp" -o "$B/app_crt.o"
 for f in shims console_curl ps5_modules heap posix_fixes kernel_mem hui_runtime_shims; do
-	"$CC" -O2 -w -I"$SDK/target/user/homebrew/include" -c "$NATIVE/$f.c" -o "$B/$f.o"
+	"$CC" -O2 -Wall -I"$SDK/target/user/homebrew/include" -c "$NATIVE/$f.c" -o "$B/$f.o"
 done
 "$CC" -shared -nostdlib -fPIC -Wl,-soname,libSceVideodec2.sprx "$NATIVE/stubs/videodec2.c" -o "$B/stubs/libSceVideodec2.so"
 

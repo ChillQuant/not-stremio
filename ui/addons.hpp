@@ -28,7 +28,7 @@ class Addons : public PageBase
         return index_;
     }
     void update(const hui::InputFrame &input, float dt);
-    void draw(hui::gfx::DrawList &list, hui::gfx::BackdropSpec &backdrop) const;
+    void draw(hui::gfx::DrawList &bg, hui::gfx::DrawList &fg, hui::gfx::BackdropSpec &backdrop) const;
 
   private:
     hui::gfx::Rect tile_rect(int index, bool final_position) const;

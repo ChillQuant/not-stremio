@@ -31,6 +31,18 @@ public:
 		});
 	}
 
+	// Runs `work` at the front of the worker queue, skipping ahead of queued work.
+	void run_urgent(std::function<void()> work);
+
+	// Convenience: compute a value on an urgent worker, deliver it on the UI thread.
+	template <typename T>
+	void run_urgent(std::function<T()> work, std::function<void(T&)> done) {
+		run_urgent([this, work, done]() {
+			auto value = std::make_shared<T>(work());
+			post([value, done]() { done(*value); });
+		});
+	}
+
 	// Called by the UI thread every frame.
 	void drain();
 

@@ -42,6 +42,7 @@ int TorrentStream::read(uint8_t* buf, int n) {
 	}
 	if (k == 0) return AVERROR_EOF;
 	if (k == -2) failure_ = "the torrent was stopped";
+	if (k == -3) failure_ = "no data from peers (torrent stalled)";
 	return k == -1 && abort_ && abort_->load() ? AVERROR_EXIT : AVERROR(EIO);
 }
 

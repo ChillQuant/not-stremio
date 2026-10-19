@@ -42,17 +42,18 @@ class PageBase
         rail_.set_page(page);
     }
 
-    // While the rail holds the focus it takes the D-pad: up/down choose a
-    // page, right hands the focus back. True when it used `input`.
+    // While the rail holds the focus it takes the D-pad: left/right move
+    // across the top pill bar, down hands the focus back to the page.
+    // True when it used `input`.
     bool rail_input(const hui::InputFrame &input)
     {
         if (!rail_.focused())
             return false;
-        if (input.nav == hui::Direction::up)
+        if (input.nav == hui::Direction::left)
             rail_.move(-1);
-        else if (input.nav == hui::Direction::down)
-            rail_.move(1);
         else if (input.nav == hui::Direction::right)
+            rail_.move(1);
+        else if (input.nav == hui::Direction::down)
             rail_.focus(false);
         return true;
     }

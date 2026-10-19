@@ -26,7 +26,9 @@ class Board
     void refresh();
     void enter(); // the page opened: restart the entrance
     void update(const hui::InputFrame &input, float dt);
-    void draw(hui::gfx::DrawList &scene, hui::gfx::BackdropSpec &backdrop) const;
+    // Glass Phase 1: bg is the page content; fg the glass panels (rail pill,
+    // hero buttons, card overlays).
+    void draw(hui::gfx::DrawList &bg, hui::gfx::DrawList &fg, hui::gfx::BackdropSpec &backdrop) const;
 
     // Search results: the same rows without the hero, with the query in the search pill.
     void set_search(const std::string *query);
@@ -48,6 +50,14 @@ class Board
     {
         return row_ < static_cast<int>(col_.size()) ? col_[row_] : 0;
     }
+    // Which hero button holds the focus (-1 = the cards, 0 = Watch Now/Resume,
+    // 1 = More Info), for Shell::route_page.
+    int hero_button() const
+    {
+        return hero_btn_;
+    }
+    // Restore a saved grid position (nav_memory): clamps, marks moved, snaps scrollers.
+    void set_cursor(int row, int col);
 
   private:
     struct Key
@@ -62,8 +72,13 @@ class Board
 
     hui::gfx::Rect card_rect(int row, int col, bool final_position) const;
     float row_top(int row, bool final_position) const;
-    void draw_hero(hui::gfx::DrawList &list, float offset) const;
-    void draw_row(hui::gfx::DrawList &list, int row, float top) const;
+    bool is_landscape_row(int row) const;
+    float row_height(int row) const;
+    float row_unscrolled_top(int row) const;
+    float scroll_target() const;
+    void draw_hero(hui::gfx::DrawList &bg, hui::gfx::DrawList &fg, float offset) const;
+    void draw_row(hui::gfx::DrawList &bg, hui::gfx::DrawList &fg, int row, float top) const;
+    void draw_skeleton_rows(hui::gfx::DrawList &bg) const;
 
     const Env &env_;
     const BoardContent *content_ = nullptr;
@@ -72,14 +87,23 @@ class Board
     Rail rail_;
 
     int row_ = 0;
+    // Glass Phase 1: the hero's buttons can hold the focus (up from the first
+    // row). -1 = on the cards, 0 = Watch Now/Resume, 1 = More Info.
+    int hero_btn_ = -1;
     bool moved_ = false; // the player has used the cursor since the rows were set
     std::vector<std::string> keys_; // the rows' keys when the state below was made
     std::vector<int> col_;
     std::vector<std::vector<hui::tween::Spring>> scale_; // per card: the pop of the focused one
     std::vector<hui::ui::Scroller> across_;              // per row: horizontal scroll
+    // Instant Board: per-row state that survives content swaps.
+    std::vector<std::string> focused_ids_;          // focused item id per row, so insertions never shift focus off a title
+    std::vector<hui::tween::Spring> row_shimmer_;   // per row: 1 while the row is validating its snapshot content
     hui::ui::Scroller down_;                             // the rows beneath the hero
     hui::ui::SpringRect ring_;                           // the white ring around the focused card
     hui::tween::Spring focus_on_;                        // 1 while the content holds the focus
+    hui::tween::Spring amb_r_{0.227f}, amb_g_{0.165f}, amb_b_{0.561f};  // ambilight, starts at 0x3a2a8f
+    bool fast_scroll_ = false;
+    float settle_hold_ = 0.0f;
 
     Key shown_;            // what the hero shows
     Key before_;           // what it showed before, fading out
