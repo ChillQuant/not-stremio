@@ -70,6 +70,7 @@ A Stremio client for jailbroken PlayStation 5 consoles, running as a native app 
 ### Playback
 - Seek: 0.25s start gate, 15s keyframe snap, stale-frame drain on seek
 - Playback speed control; watched-sync
+- DualSense touchpad volume: swipe up/down on the touchpad during playback for continuous 0–200% master volume (follows the finger like a slider; on-screen bar OSD; boost zone above 100%)
 - Hardware decoder: unconditional slot renewal on flush; VDEC frame-buffer DMA race fixed
 - Audio: HDMI init handling; zero-copy IEC61937 bursts; halved passthrough sleeps
 
